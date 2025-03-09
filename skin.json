@@ -1,0 +1,19 @@
+{
+  "name": "Steam modular 2.0",
+  "author": "Von-Amadeus",
+  "description": "Steam 2.0 Modular is an elegant and minimalist theme inspired by GOG 2.0 that modernizes the Steam experience. This theme focuses on simplifying the interface by removing unnecessary visual elements and reorganizing content more efficiently, all while maintaining the full functionality of Steam.",
+  "header_image": "https://i.imgur.com/sCCMnkG.png",
+  "splash_image": "https://i.imgur.com/sCCMnkG.png",
+  "tags": [
+      "Example",
+      "Template"
+  ],
+    "version": "1.0.0", 
+    "github": {
+        "owner": "Br1Rol2",
+        "repo_name": "https://github.com/Br1Rol2/Steam2.0-modular"
+    },
+
+  "Steam-WebKit": "webkit.css",
+  "UseDefaultPatches": true
+}
