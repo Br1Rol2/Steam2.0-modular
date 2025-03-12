@@ -5,13 +5,18 @@
   "header_image": "https://i.imgur.com/sCCMnkG.png",
   "splash_image": "https://i.imgur.com/sCCMnkG.png",
   "tags": [
-      "Example",
-      "Template"
+    "Elegant",
+    "Modern",
+    "Minimalist",
+    "Modular",
+    "Clean UI",
+    "GOG 2.0 Inspired",
+    "User-Friendly"
   ],
     "version": "1.0.0", 
     "github": {
         "owner": "Br1Rol2",
-        "repo_name": "https://github.com/Br1Rol2/Steam2.0-modular"
+        "repo_name": "Steam2.0-modular"
     },
 
   "Steam-WebKit": "webkit.css",
