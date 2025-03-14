@@ -54,21 +54,3 @@ function observePanel() {
 }
 
 observePanel();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -64,7 +64,7 @@ box-shadow: none;
 /* HEADER */
 ._3Z7VQ1IMk4E3HsHvrkLNgo {
     background: none;
-    background-image: linear-gradient(225deg, #000000 0%, #19002e 50%, #061f30 100%);
+    background-image: linear-gradient(225deg, #000000 0%, #19002e 50%, #061f30 100%) !important;
 }
 
 /* FOOTER */
@@ -107,3 +107,22 @@ button.DialogButton, .DesktopUI .title-area-icon:hover, .friendsui-container .ti
             background-image: linear-gradient(270deg, #e7e2f5ad 0%, #dcdedfa5 100%) !important;
             border-radius: 5px;
         }        
+
+
+
+
+/*GAMES PROPERTIES*/
+        ._30-E9De2BTSA_LQAluUDUI, ._2kwFFHckg8jvnwJfg9-la8, .xSTLmzylFJdIfak7ZdhuA {
+
+            background-image: linear-gradient(270deg, #15004b 0%, #011d46 100%) !important;
+        }
+
+        .CFTLX2wIKOK3hNV-fS7_V.DesktopUI, .DesktopUI .CFTLX2wIKOK3hNV-fS7_V, ._2YFL1GU5xTFr76S8Kw008E, ._1SVX5nVvig2xLYfeiThU-8, ._1SVX5nVvig2xLYfeiThU-8 > div, ._34dlBrUZP054ElsvOp5hQm ._1-ooPvEW2c6SHuhnz6SK3t .NP3DlSRiWZygPWZSLSVX, ._3e--AJv1pErMz7ete-Hprz, ._3vCzSrrXZzZjVJFZNg9SGu, ._2rxrVvbku0AC8Qbequ4-z9 ._2SvsKGOQeIoV8laKj5Ql5s ._2YSm1vJtLeKb9BbihsLY1F ._2_4_nZy-T2C3pHa81tGH76 .c8HfPY9sQZdSZtTna_qYB:hover, .RGNMWtyj73_-WdhflrmuY ._2CmrnGY-Amtd83ScJkFvx2 {
+
+            background-image: linear-gradient(225deg, #2b0018 0%, #17011d 60%, #010e2d 100%);
+        }
+
+/*SEARCHBAR*/
+        ._1bGewp3tfzqAF6fVTFFUOz .UkR3sY319PuaUNuUWks2K {
+            background: #00011c;
+        }
