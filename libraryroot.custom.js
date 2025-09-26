@@ -876,6 +876,7 @@ observeFriendsListPanel();
    * @returns {string} - Unique game identifier
    */
   function getGameId(gameCell) {
+    // First try to get Steam App ID from link
     const link = gameCell.querySelector('a[role="link"]')
     if (link) {
       const href = link.getAttribute("href") || ""
@@ -883,10 +884,76 @@ observeFriendsListPanel();
       if (match) return match[1]
     }
 
+    // Fallback: create a hash from the game title
     const gameTitle = getGameTitle(gameCell)
-    return btoa(gameTitle)
-      .replace(/[^a-zA-Z0-9]/g, "")
-      .substring(0, 16)
+    
+    // Create a simple hash from the title
+    let hash = 0
+    for (let i = 0; i < gameTitle.length; i++) {
+      const char = gameTitle.charCodeAt(i)
+      hash = ((hash << 5) - hash) + char
+      hash = hash & hash // Convert to 32-bit integer
+    }
+    
+    // Convert to base36 and ensure it's always positive
+    const hashStr = Math.abs(hash).toString(36)
+    
+    // Add a prefix to make it more unique and ensure minimum length
+    return `game_${hashStr}`.substring(0, 16)
+  }
+
+  /**
+   * Generate compatible game ID (for backward compatibility)
+   * This function can generate both old and new format IDs
+   * @param {string} gameTitle - Game title
+   * @param {boolean} useOldFormat - Whether to use old btoa format
+   * @returns {string} - Game ID
+   */
+  function generateCompatibleGameId(gameTitle, useOldFormat = false) {
+    if (useOldFormat) {
+      // Old format: btoa with truncation
+      try {
+        return btoa(gameTitle).replace(/[^a-zA-Z0-9]/g, "").substring(0, 16)
+      } catch (error) {
+        // Fallback to new format if btoa fails
+        let hash = 0
+        for (let i = 0; i < gameTitle.length; i++) {
+          const char = gameTitle.charCodeAt(i)
+          hash = ((hash << 5) - hash) + char
+          hash = hash & hash
+        }
+        return `game_${Math.abs(hash).toString(36)}`.substring(0, 16)
+      }
+    } else {
+      // New format: hash with prefix
+      let hash = 0
+      for (let i = 0; i < gameTitle.length; i++) {
+        const char = gameTitle.charCodeAt(i)
+        hash = ((hash << 5) - hash) + char
+        hash = hash & hash
+      }
+      return `game_${Math.abs(hash).toString(36)}`.substring(0, 16)
+    }
+  }
+
+  /**
+   * Check if a game ID is in old format
+   * @param {string} gameId - Game ID to check
+   * @returns {boolean} - True if old format
+   */
+  function isOldFormatId(gameId) {
+    // Old format IDs don't start with "game_" and are usually base64-like
+    return !gameId.startsWith("game_") && gameId.length <= 16
+  }
+
+  /**
+   * Convert old format ID to new format
+   * @param {string} oldId - Old format game ID
+   * @param {string} gameTitle - Game title
+   * @returns {string} - New format game ID
+   */
+  function convertOldIdToNew(oldId, gameTitle) {
+    return generateCompatibleGameId(gameTitle, false)
   }
 
   /**
@@ -982,6 +1049,315 @@ observeFriendsListPanel();
     return saved === "true"
   }
 
+  /**
+   * Synchronize localStorage with current games in DOM
+   * This function detects new games and missing games, and updates the saved order accordingly
+   */
+  function synchronizeGameOrder() {
+    if (!currentGrid || !isManualOrderEnabled) return
+
+    try {
+      const currentGames = getAllGames()
+      if (currentGames.length === 0) {
+        console.log("[ManualOrder] ⚠️ No games found in grid, skipping synchronization")
+        return false
+      }
+
+      console.log(`[ManualOrder] 🔄 Synchronizing order: ${currentGames.length} current games, ${savedOrder.length} saved games`)
+
+      // Create a map of current games for quick lookup
+      const currentGameMap = new Map()
+      currentGames.forEach((cell, index) => {
+        try {
+          const id = getGameId(cell)
+          const title = getGameTitle(cell)
+          
+          if (id && title) {
+            currentGameMap.set(id, {
+              id: id,
+              title: title,
+              element: cell
+            })
+          } else {
+            console.warn(`[ManualOrder] ⚠️ Skipping game ${index}: invalid ID or title`)
+          }
+        } catch (error) {
+          console.error(`[ManualOrder] ❌ Error processing game ${index}:`, error)
+        }
+      })
+
+      // Create a map of saved games for quick lookup
+      const savedGameMap = new Map()
+      savedOrder.forEach(game => {
+        if (game && game.id) {
+          savedGameMap.set(game.id, game)
+        }
+      })
+
+      let orderChanged = false
+      const newOrder = []
+
+      // Step 1: Keep existing games in their saved order
+      savedOrder.forEach(savedGame => {
+        if (savedGame && currentGameMap.has(savedGame.id)) {
+          // Game still exists, keep it in the same position
+          newOrder.push(savedGame)
+          currentGameMap.delete(savedGame.id) // Remove from current map to track remaining
+        } else if (savedGame) {
+          // Game no longer exists, skip it
+          console.log(`[ManualOrder] 🗑️ Removed missing game: ${savedGame.title} (${savedGame.id})`)
+          orderChanged = true
+        }
+      })
+
+      // Step 2: Add new games at the end
+      currentGameMap.forEach((gameData, id) => {
+        newOrder.push({
+          id: id,
+          title: gameData.title
+        })
+        console.log(`[ManualOrder] ➕ Added new game: ${gameData.title} (${id})`)
+        orderChanged = true
+      })
+
+      // Update saved order if changes were detected
+      if (orderChanged) {
+        savedOrder = newOrder
+        localStorage.setItem(MANUAL_ORDER_KEY, JSON.stringify(newOrder))
+        console.log(`[ManualOrder] ✅ Order synchronized: ${newOrder.length} games`)
+        
+        // Show notification about changes
+        const addedCount = currentGameMap.size
+        const removedCount = savedOrder.length - newOrder.length + addedCount
+        
+        if (addedCount > 0 || removedCount > 0) {
+          let message = "🔄 Order synchronized: "
+          if (addedCount > 0) message += `+${addedCount} new games `
+          if (removedCount > 0) message += `-${removedCount} removed games`
+          showNotification(message)
+        }
+      } else {
+        console.log(`[ManualOrder] ✅ Order already synchronized`)
+      }
+
+      return orderChanged
+    } catch (error) {
+      console.error("[ManualOrder] ❌ Error during synchronization:", error)
+      return false
+    }
+  }
+
+  /**
+   * Enhanced apply order with automatic synchronization
+   */
+  function applyOrderWithSync() {
+    if (!currentGrid || !isManualOrderEnabled || isApplyingOrder) {
+      return
+    }
+
+    // First, synchronize the order
+    const wasSynchronized = synchronizeGameOrder()
+
+    // Then apply the order
+    applyOrder()
+
+    return wasSynchronized
+  }
+
+  /**
+   * Check if significant changes occurred in game count
+   * @returns {boolean} - True if significant changes detected
+   */
+  function detectSignificantChanges() {
+    if (!currentGrid) return false
+
+    const currentGames = getAllGames()
+    const currentCount = currentGames.length
+    const savedCount = savedOrder.length
+
+    // Detect significant changes (more than 1 game difference)
+    const difference = Math.abs(currentCount - savedCount)
+    const isSignificant = difference > 1
+
+    if (isSignificant) {
+      console.log(`[ManualOrder] 🚨 Significant change detected: ${currentCount} current vs ${savedCount} saved (diff: ${difference})`)
+    }
+
+    return isSignificant
+  }
+
+  /**
+   * Force synchronization when significant changes are detected
+   */
+  function forceSynchronizationIfNeeded() {
+    if (!isManualOrderEnabled) return
+
+    if (detectSignificantChanges()) {
+      console.log("[ManualOrder] 🔄 Forcing synchronization due to significant changes")
+      synchronizeGameOrder()
+      applyOrder()
+      showNotification("🔄 Order synchronized due to game changes")
+    }
+  }
+
+  /**
+   * Debug function to show synchronization status
+   */
+  function debugSynchronizationStatus() {
+    if (!currentGrid) {
+      console.log("[ManualOrder] ❌ No grid found")
+      return
+    }
+
+    const currentGames = getAllGames()
+    const currentCount = currentGames.length
+    const savedCount = savedOrder.length
+
+    console.log("=== Manual Order Synchronization Status ===")
+    console.log(`Current games in DOM: ${currentCount}`)
+    console.log(`Saved games in localStorage: ${savedCount}`)
+    console.log(`Manual order enabled: ${isManualOrderEnabled}`)
+    console.log(`Applying order: ${isApplyingOrder}`)
+    
+    if (currentCount > 0) {
+      console.log("Current games:", currentGames.map(cell => getGameTitle(cell)).slice(0, 5))
+    }
+    
+    if (savedCount > 0) {
+      console.log("Saved games:", savedOrder.map(game => game.title).slice(0, 5))
+    }
+
+    const difference = Math.abs(currentCount - savedCount)
+    if (difference > 0) {
+      console.log(`⚠️ Difference detected: ${difference} games`)
+      console.log("Recommendation: Run synchronizeGameOrder()")
+    } else {
+      console.log("✅ Order is synchronized")
+    }
+    console.log("==========================================")
+  }
+
+  /**
+   * Debug function to test game ID generation
+   */
+  function debugGameIds() {
+    if (!currentGrid) {
+      console.log("[ManualOrder] ❌ No grid found")
+      return
+    }
+
+    const games = getAllGames()
+    console.log("=== Game ID Generation Test ===")
+    console.log(`Testing ${games.length} games...`)
+    
+    games.slice(0, 10).forEach((cell, index) => {
+      const title = getGameTitle(cell)
+      const id = getGameId(cell)
+      console.log(`${index + 1}. "${title}" -> ID: ${id}`)
+    })
+    
+    console.log("================================")
+  }
+
+  /**
+   * Debug function to test import synchronization
+   */
+  function debugImportSync() {
+    if (!currentGrid) {
+      console.log("[ManualOrder] ❌ No grid found")
+      return
+    }
+
+    const currentGames = getAllGames()
+    console.log("=== Import Synchronization Test ===")
+    console.log(`Current games in DOM: ${currentGames.length}`)
+    console.log(`Saved games in localStorage: ${savedOrder.length}`)
+    
+    // Create a mock imported order with some games that exist and some that don't
+    const mockImportedOrder = [
+      ...savedOrder.slice(0, 3), // Keep first 3 games
+      { id: "fake_game_1", title: "Fake Game 1" }, // This won't exist
+      { id: "fake_game_2", title: "Fake Game 2" }, // This won't exist
+    ]
+    
+    console.log(`Mock imported order: ${mockImportedOrder.length} games`)
+    console.log("Testing synchronization...")
+    
+    const synchronized = synchronizeImportedOrder(mockImportedOrder)
+    console.log(`Synchronized result: ${synchronized.length} games`)
+    console.log("================================")
+  }
+
+  /**
+   * Debug function to test order preservation
+   */
+  function debugOrderPreservation() {
+    if (!currentGrid) {
+      console.log("[ManualOrder] ❌ No grid found")
+      return
+    }
+
+    const currentGames = getAllGames()
+    console.log("=== Order Preservation Test ===")
+    console.log(`Current games in DOM: ${currentGames.length}`)
+    
+    if (savedOrder.length === 0) {
+      console.log("❌ No saved order to test")
+      return
+    }
+    
+    // Create a partial import (less games than current)
+    const partialImport = savedOrder.slice(0, Math.floor(savedOrder.length / 2))
+    console.log(`Partial import: ${partialImport.length} games (${savedOrder.length} total available)`)
+    
+    console.log("Original order (first 5):", savedOrder.slice(0, 5).map(g => g.title))
+    console.log("Partial import (first 5):", partialImport.slice(0, 5).map(g => g.title))
+    
+    const synchronized = synchronizeImportedOrder(partialImport)
+    console.log("Synchronized result (first 5):", synchronized.slice(0, 5).map(g => g.title))
+    
+    // Check if order is preserved for imported games
+    let orderPreserved = true
+    for (let i = 0; i < partialImport.length; i++) {
+      if (synchronized[i] && synchronized[i].id !== partialImport[i].id) {
+        orderPreserved = false
+        break
+      }
+    }
+    
+    console.log(`Order preserved: ${orderPreserved ? "✅ YES" : "❌ NO"}`)
+    console.log("================================")
+  }
+
+  /**
+   * Debug function to test backward compatibility
+   */
+  function debugBackwardCompatibility() {
+    console.log("=== Backward Compatibility Test ===")
+    
+    const testTitles = [
+      "Cuphead",
+      "Katana ZERO", 
+      "Counter-Strike 2",
+      "FIFA 22"
+    ]
+    
+    testTitles.forEach(title => {
+      const oldId = generateCompatibleGameId(title, true)
+      const newId = generateCompatibleGameId(title, false)
+      const isOld = isOldFormatId(oldId)
+      const convertedId = convertOldIdToNew(oldId, title)
+      
+      console.log(`"${title}":`)
+      console.log(`  Old ID: ${oldId} (isOld: ${isOld})`)
+      console.log(`  New ID: ${newId}`)
+      console.log(`  Converted: ${convertedId}`)
+      console.log(`  Match: ${newId === convertedId ? "✅" : "❌"}`)
+    })
+    
+    console.log("================================")
+  }
+
   // ============================================================================
   // IMPORT/EXPORT FUNCTIONALITY
   // ============================================================================
@@ -1019,7 +1395,7 @@ observeFriendsListPanel();
   }
 
   /**
-   * Handle imported order file
+   * Handle imported order file with automatic synchronization
    * @param {Event} event - File input change event
    */
   function handleImportFile(event) {
@@ -1035,14 +1411,23 @@ observeFriendsListPanel();
           throw new Error("Invalid file format")
         }
 
-        savedOrder = importedData.order
+        console.log(`[ManualOrder] 📂 Importing order with ${importedData.order.length} games`)
+
+        // Store the imported order temporarily
+        const importedOrder = importedData.order
+
+        // Synchronize the imported order with current games
+        const synchronizedOrder = synchronizeImportedOrder(importedOrder)
+
+        // Update saved order with synchronized version
+        savedOrder = synchronizedOrder
         localStorage.setItem(MANUAL_ORDER_KEY, JSON.stringify(savedOrder))
 
         if (isManualOrderEnabled) {
-          applyOrder()
+          applyOrderWithSync()
         }
 
-        showNotification(`📂 Order imported (${savedOrder.length} games)`)
+        showNotification(`📂 Order imported and synchronized (${savedOrder.length} games)`)
 
         // Close modal after import
         closeModal()
@@ -1055,6 +1440,196 @@ observeFriendsListPanel();
 
     // Reset input
     event.target.value = ""
+  }
+
+  /**
+   * Synchronize imported order with current games in DOM
+   * @param {Array} importedOrder - The imported order array
+   * @returns {Array} - Synchronized order array
+   */
+  function synchronizeImportedOrder(importedOrder) {
+    if (!currentGrid) {
+      console.log("[ManualOrder] ⚠️ No grid found, returning imported order as-is")
+      return importedOrder
+    }
+
+    try {
+      const currentGames = getAllGames()
+      if (currentGames.length === 0) {
+        console.log("[ManualOrder] ⚠️ No games found in grid, returning imported order as-is")
+        return importedOrder
+      }
+
+      console.log(`[ManualOrder] 🔄 Synchronizing imported order: ${currentGames.length} current games, ${importedOrder.length} imported games`)
+
+      // Create a map of current games for quick lookup
+      const currentGameMap = new Map()
+      currentGames.forEach((cell, index) => {
+        try {
+          const id = getGameId(cell)
+          const title = getGameTitle(cell)
+          
+          if (id && title) {
+            currentGameMap.set(id, {
+              id: id,
+              title: title,
+              element: cell
+            })
+          } else {
+            console.warn(`[ManualOrder] ⚠️ Skipping game ${index}: invalid ID or title`)
+          }
+        } catch (error) {
+          console.error(`[ManualOrder] ❌ Error processing game ${index}:`, error)
+        }
+      })
+
+      // Create a map of imported games for quick lookup (with backward compatibility)
+      const importedGameMap = new Map()
+      const oldFormatGames = []
+      
+      importedOrder.forEach(game => {
+        if (game && game.id) {
+          // Check if this is an old format ID
+          if (isOldFormatId(game.id)) {
+            console.log(`[ManualOrder] 🔄 Converting old format ID: ${game.title} (${game.id})`)
+            oldFormatGames.push(game)
+          } else {
+            importedGameMap.set(game.id, game)
+          }
+        }
+      })
+
+      // Convert old format games to new format and add to map
+      oldFormatGames.forEach(oldGame => {
+        const newId = convertOldIdToNew(oldGame.id, oldGame.title)
+        const convertedGame = {
+          id: newId,
+          title: oldGame.title
+        }
+        importedGameMap.set(newId, convertedGame)
+        console.log(`[ManualOrder] ✅ Converted: ${oldGame.title} (${oldGame.id} -> ${newId})`)
+      })
+
+      const synchronizedOrder = []
+      let addedCount = 0
+      let removedCount = 0
+      let keptCount = 0
+
+      // Step 1: Keep imported games that still exist in current DOM (preserving order)
+      importedOrder.forEach(importedGame => {
+        if (!importedGame) return
+        
+        // Get the correct ID (converted if necessary)
+        let gameId = importedGame.id
+        if (isOldFormatId(gameId)) {
+          gameId = convertOldIdToNew(gameId, importedGame.title)
+        }
+        
+        if (currentGameMap.has(gameId)) {
+          // Game exists in both imported and current, keep it in the same position
+          const gameToAdd = {
+            id: gameId,
+            title: importedGame.title
+          }
+          synchronizedOrder.push(gameToAdd)
+          currentGameMap.delete(gameId) // Remove from current map to track remaining
+          keptCount++
+          console.log(`[ManualOrder] ✅ Kept imported game: ${importedGame.title} (${gameId})`)
+        } else {
+          // Game from import no longer exists in current DOM, skip it
+          console.log(`[ManualOrder] 🗑️ Skipping imported game that no longer exists: ${importedGame.title} (${importedGame.id})`)
+          removedCount++
+        }
+      })
+
+      // Step 2: Add current games that weren't in the imported order (at the end)
+      currentGameMap.forEach((gameData, id) => {
+        synchronizedOrder.push({
+          id: id,
+          title: gameData.title
+        })
+        console.log(`[ManualOrder] ➕ Added current game not in import: ${gameData.title} (${id})`)
+        addedCount++
+      })
+
+      // Step 3: Verify and fix order if needed
+      if (synchronizedOrder.length !== currentGames.length) {
+        console.warn(`[ManualOrder] ⚠️ Order count mismatch: ${synchronizedOrder.length} vs ${currentGames.length}`)
+        
+        // Re-sync to ensure all current games are included
+        const finalOrder = []
+        const usedIds = new Set()
+        
+        // First, add all synchronized games (preserving import order)
+        synchronizedOrder.forEach(game => {
+          if (game && game.id && !usedIds.has(game.id)) {
+            finalOrder.push(game)
+            usedIds.add(game.id)
+          }
+        })
+        
+        // Then, add any missing current games
+        currentGames.forEach(cell => {
+          const id = getGameId(cell)
+          const title = getGameTitle(cell)
+          
+          if (id && title && !usedIds.has(id)) {
+            finalOrder.push({
+              id: id,
+              title: title
+            })
+            console.log(`[ManualOrder] 🔧 Added missing game: ${title} (${id})`)
+          }
+        })
+        
+        return finalOrder
+      }
+
+      console.log(`[ManualOrder] ✅ Import synchronization complete:`)
+      console.log(`   - Kept: ${keptCount} games (preserving import order)`)
+      console.log(`   - Removed: ${removedCount} games (no longer exist)`)
+      console.log(`   - Added: ${addedCount} games (new in current DOM)`)
+      console.log(`   - Final count: ${synchronizedOrder.length} games`)
+
+      // Final verification: ensure order is complete and correct
+      if (synchronizedOrder.length === currentGames.length) {
+        console.log(`[ManualOrder] ✅ Order verification passed`)
+        return synchronizedOrder
+      } else {
+        console.warn(`[ManualOrder] ⚠️ Order verification failed, rebuilding...`)
+        
+        // Rebuild order completely
+        const finalOrder = []
+        const processedIds = new Set()
+        
+        // Step 1: Add imported games in their original order
+        importedOrder.forEach(importedGame => {
+          if (importedGame && importedGame.id && currentGameMap.has(importedGame.id) && !processedIds.has(importedGame.id)) {
+            finalOrder.push(importedGame)
+            processedIds.add(importedGame.id)
+            currentGameMap.delete(importedGame.id)
+          }
+        })
+        
+        // Step 2: Add remaining current games
+        currentGameMap.forEach((gameData, id) => {
+          if (!processedIds.has(id)) {
+            finalOrder.push({
+              id: id,
+              title: gameData.title
+            })
+            processedIds.add(id)
+          }
+        })
+        
+        console.log(`[ManualOrder] 🔧 Rebuilt order: ${finalOrder.length} games`)
+        return finalOrder
+      }
+
+    } catch (error) {
+      console.error("[ManualOrder] ❌ Error during import synchronization:", error)
+      return importedOrder // Return original if synchronization fails
+    }
   }
 
   // ============================================================================
@@ -1270,7 +1845,7 @@ observeFriendsListPanel();
 
       // Aplicar orden después de cerrar el modal
       setTimeout(() => {
-        applyOrder()
+        applyOrderWithSync()
         showNotification("✅ Order applied successfully!")
       }, 300)
     })
@@ -1382,16 +1957,22 @@ observeFriendsListPanel();
             (node) => node.nodeType === 1 && node.matches && node.matches(GAME_SELECTOR),
           )
 
-          // Detectar cambios significativos en los juegos
-          if (addedNodes.length > 3 || removedNodes.length > 3) {
-            significantChange = true
-            console.log(
-              `[ManualOrder] 🔄 Significant games change detected: +${addedNodes.length}, -${removedNodes.length}`,
-            )
-          } else if (addedNodes.length > 0 || removedNodes.length > 0) {
-            shouldApplyOrder = true
-            console.log(`[ManualOrder] 🔄 Minor games change detected: +${addedNodes.length}, -${removedNodes.length}`)
-          }
+                // Detectar cambios significativos en los juegos
+      if (addedNodes.length > 3 || removedNodes.length > 3) {
+        significantChange = true
+        console.log(
+          `[ManualOrder] 🔄 Significant games change detected: +${addedNodes.length}, -${removedNodes.length}`,
+        )
+      } else if (addedNodes.length > 0 || removedNodes.length > 0) {
+        shouldApplyOrder = true
+        console.log(`[ManualOrder] 🔄 Minor games change detected: +${addedNodes.length}, -${removedNodes.length}`)
+      }
+
+      // Check for significant changes in game count
+      if (detectSignificantChanges()) {
+        significantChange = true
+        console.log("[ManualOrder] 🚨 Significant count change detected, forcing sync")
+      }
         }
       })
 
@@ -1407,7 +1988,7 @@ observeFriendsListPanel();
         gridRenderTimeout = setTimeout(() => {
           if (!isApplyingOrder && isManualOrderEnabled) {
             console.log("[ManualOrder] 🔄 Applying order after grid change...")
-            applyOrder()
+            applyOrderWithSync()
           }
         }, delay)
       }
@@ -1543,7 +2124,12 @@ observeFriendsListPanel();
 
           // Aplicar orden con delay para asegurar que el grid esté listo
           setTimeout(() => {
-            applyOrder()
+            // Force initial synchronization when enabling manual mode
+            if (savedOrder.length === 0) {
+              console.log("[ManualOrder] 🆕 First time enabling, creating initial order")
+              saveOrder() // Save current order as initial
+            }
+            applyOrderWithSync()
           }, 500)
 
           setupGridObserver()
@@ -1794,7 +2380,7 @@ const DEFAULT_COLORS = {
       { hex: "#056dad", alpha: 0.8 }
     ],
     angle: 114,
-    selector: "button.DialogButton, ._1l0LmmqDUXH19SjfELddn7, .DesktopUI .title-area-icon:hover, .friendsui-container .title-area-icon:hover, .DesktopUI .PP7LM0Ow1K5qkR8WElLpt, ._3qIuY9S_vXm3IQS-uE9SRS .PP7LM0Ow1K5qkR8WElLpt, ._1ABCOz8DSrl-YJdh1xD-m0, ._1ABCOz8DSrl-YJdh1xD-m0._1dDpSuaJBGZzS41s0SPk4c, span._3nqxIgL0a0DbPZHRZRzWsp, .HijmccPB1BKyhOwhX1EVl._3-_jME_xsuvgT3Dvq4bw_q._3hmGW9wIxNIoPPu1aS7rFm, .HijmccPB1BKyhOwhX1EVl._3-_jME_xsuvgT3Dvq4bw_q._3hmGW9wIxNIoPPu1aS7rFm:hover, .HijmccPB1BKyhOwhX1EVl:not(._3-_jME_xsuvgT3Dvq4bw_q) + .HijmccPB1BKyhOwhX1EVl:not(._3-_jME_xsuvgT3Dvq4bw_q)::before, ._1-vlriAtKYDViAEunue4VO._2DpXjzK3WWsOtUWUrcuOG7, ._1Hye7o1wYIfc9TE9QKRW4T, ._3LLH_F43MTu6UtG4Z3kudv, .eKmEXJCm_lgme24Fp_HWt._2HFrmMgB38Ike5w4rVxzEX.gpfocus, .eKmEXJCm_lgme24Fp_HWt._2HFrmMgB38Ike5w4rVxzEX.gpfocuswithin, .eKmEXJCm_lgme24Fp_HWt._2HuzvKQ2QMUJ-JJOeApaF1:not(.aIeh3X5T2M074RLW1qn6_):hover, ._2mL2HfT5AkDXRi1YBnRWKa:focus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .lat0M-V5X4uYd6Mpm1DJ1 ._9Ig1o0jVRia2uf_FKR3rs, .lat0M-V5X4uYd6Mpm1DJ1 ._2Z68vjdOnUDA2ULQG41JVV, .lat0M-V5X4uYd6Mpm1DJ1 ._25eT23F0cV5lmT3tXAIA56, ._464mFQmvIW2e9TQypXX7W ._2ltn2BK4fnrPEGzNwxx6bx button.DialogButton:enabled:active.gpfocus, ._3qYm9oxf8MdyvQDJgbfCrF ._10OzYaCdn7cgVMec9ozEJG.GamepadMode, .GamepadMode ._3qYm9oxf8MdyvQDJgbfCrF ._10OzYaCdn7cgVMec9ozEJG, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, ._3RPaPwdCZoCW6eX8k9QyRj ._2Uf-0Z6C7U0MMzWK80PYzJ.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, ._2XZq-_f6npaQdAgeRzKIkz.Yd-DsWkYiFiYwpci--Yk_.GamepadMode.gpfocus, .GamepadMode ._2XZq-_f6npaQdAgeRzKIkz.Yd-DsWkYiFiYwpci--Yk_.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, ._3JmF6tWRZoWygynJdLp7p ._3Pp8Leu5OcBHtt7QkPKigO:hover, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, ._1JZstfJ6jCBChXx0ZDwfpR.gpfocus, ._2_QSE1Nit6wrabY5ZgDZOz.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, ._1-SwyZw8fv8r23--767UPK.gpfocuswithin, ._2588puX-Qf7adPWiHLcRbW.gpfocuswithin, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .friendGroup .groupName.gpfocus, .FriendsListContent.gpfocus .friendlistListContainer, .friendsContainer.gpfocus, .msg div.ChatMessageOpenGraph.gpfocus, .msg div.SteamPublishedFile.gpfocus, .ChatMessageInvite.gpfocus, .inviteLinkContainer .DialogDropDown._DialogInputContainer:hover, .msg.gpfocus, .FriendPicker .FriendPickerFriendList.GamepadMode.gpfocus, .GamepadMode .FriendPicker .FriendPickerFriendList.gpfocus, .rolePriorityButton, .rolePriorityButton.Disabled:active, .rolePriorityButton.Disabled:hover, .rolePriorityButton.Disabled, ._3TvBVwaH8eIBabTdki35oe .QAVElkR0V7KPXLjPVsvl-:focus, ._3rsQRA6-lR_jrdiuv3ARnf .tNl7CupYn5jcZaRWX6PU0._1DMzCviYCYOj6lKga1y_vt, ._1xfC8oO6JVNnioU1NPTN9s, ._1LWDAthWNhS7CyjQqjbeoS.YgnZYhUBZBiUJwuMUvxYw.gpfocus, ._1LWDAthWNhS7CyjQqjbeoS.YgnZYhUBZBiUJwuMUvxYw.gpfocuswithin, ._1LWDAthWNhS7CyjQqjbeoS._15S9pg9Y-g9PGES94IuSQA:not(.hBJA7sc7szpcoeOdRRfsP):hover, ._17CvBVp1rwECBn2FRb4oMA:hover, ._17CvBVp1rwECBn2FRb4oMA._1Rmvuh4adSSWxOVlDHISQO, ._3glxw5rYlV6DTRgH3dHWPD:focus, ._17SQWViInfB-hmYYLoK4Yw:hover, ._17SQWViInfB-hmYYLoK4Yw:active, ._1TR3CCCdSmI-0MXucYBuP2 ._6Z2AOU-R-8aK7KZevey0W, .BasicUI ._170Npw5h84elypMSQ8zNDI ._1ennWu_xj2YF8FRYgJ2M2H ._1axoiZsC1RBp22JQmxiBIc.gpfocuswithin, ._1xPZwgYI7sXtyFt2n8ZjtP, ._1ZpBQtDqcKBbfIIv01Vs1R > div.DesktopUI, .DesktopUI ._1ZpBQtDqcKBbfIIv01Vs1R > div, ._1-nHjRywUoX7Mpyc6JOPaQ, ._2IEorvaTnkOBZw3PEDXZoB, ._12aBP1DmpEKuMxfFuCMbiN:focus, ._12aBP1DmpEKuMxfFuCMbiN:hover, ._3VQeLk37GAZSmurTc4HPP6, ._3Lz1Rs6a2Lc6Mx3J86VKKE, ._2n6FNLKyb6al_YPk13xS7S ._2qURXDJ4ZtfSVOesDk7A73 .DialogCheckbox, .BasicUI ._2n6FNLKyb6al_YPk13xS7S ._2RCSUgg2X_uF_C0e1lrcqc:focus, ._1WKUOT3FdB9-48MMP0Tz9l, ._1kyPoKPv8_QS8nK7zedHW ._3ggB6QN4NkLZyOYn8xj5N7._16L8gDKLHwbnMVEmoFCK9, ._28eIRmQ229ntDIyQXTn3Ub, ._28eIRmQ229ntDIyQXTn3Ub.QE3sHW9puNTAjiRDY71Xy, ._29AJUo6aKT93gX24N5WFj_, .xgdATZWePJFXYrEbin8y9 ._10hh85J75faHJ8ChhjlzLl, ._13LoHE22iGo7eWHNFp5f9L, ._3xXvCbPSIbZttSKUFZbFe-, ._1JVxK7k1dVGT-XnDTUFrIC, ._3WR6QIYfn7Vo3gVdKjjFuW, ._3WR6QIYfn7Vo3gVdKjjFuW ._2rMgXYkzAhJXWsyI9YRY11, ._35iX6Ylrzw0fN8AHhcIlGF, .y7Rs2hclga_Ij4MsMiMdx ._10RZezvQlWdLLbkgRIS9_4, ._6em9hiNtkrdaHE8eVfq0P ._365PZ8BVgd7sz6-xR9E9yb .rYp_PTAXV9D7Jc5c756Re, ._2YoYTMvXU6ZiyEtsi0W2Lo, ._1rhLTraGkRDOPJslCL3i9C:hover, ._1rhLTraGkRDOPJslCL3i9C._2_K-vDkSsSw6FxrfZL-ScT, .u04UCICvObTJ4FUr9RQen, ._1lcizT_Nbxsk484XzTtcFf, ._2JvQPEForHWVgljtxxAwRP, ._22fHb5-teK8S1sxdxVu9yz.gpfocus, ._3LzXZkJi8bsPoHzXEDbLER.gpfocus, .snegceTtDFk1Ok-EUE8fd.gpfocus, .HYloJyr41RFbSFoc8RY3w.gpfocus, ._3Rk61GMptJMR1oaiUCjLyL, ._5j8Im-8lAIRRboL2_jZbQ ._26uPMBCPxQYJ8EBcqiNu8P.gpfocus, ._2IWpfqj8UL5hUs7n-pxnUy ._3sqYFYR9Cl3T6Iy-0a3EJ2:hover, ._3jYltbvkgQtLaooGJYcjJY ._2CKq4dAZDTlb7svd2NHxi6:hover, ._1BwVZqfM73ZtBVsNs3ZcMD, .LclHwcOfHFpwObYMD1HLa ._3H2GezG50hog8gSDj-qbx1 ._3EWVuoln1WAvpEaPNfpift, .LclHwcOfHFpwObYMD1HLa ._3H2GezG50hog8gSDj-qbx1 ._1d8CbcBnA6t3lsxYdnMv1h, .q5OA-x6LcVkvtLCGp-8JC .DialogBody .DialogBodyText .isIfZv25e7VAf6QG7PMrF .YvsXGGpc_ep7jT-hmQxZe, ._2TAQYpbxatDYN3Ex76KX5u .DialogBody .DialogBodyText ._7jaC6UFFrvcKq2UlJr1Pb .Cw--cBWy7v1Ey1JF0VkBN, ._24O5i9aa5PKJmbP0tL_Jbf, .BasicUI button.DialogButton._3Cdin80d-hVsakHUZboheb._3nJyYxGQ3kdwwabPmxNnMe:not(.gpfocus), ._1GdR5LbENV7LOGROJBxohI._1GdR5LbENV7LOGROJBxohI.DialogButton:enabled, ._21P7c4MWmsU2QSZeL-uyZo.gpfocus:not(._74yh4KBx-CqtDEw0dDxpH) ._1VNuYHM6BPBOJspC6zPf5r.IbePLaw-vSvhG1GTenYFg, ._1VNuYHM6BPBOJspC6zPf5r:hover, ._1VNuYHM6BPBOJspC6zPf5r._3-SbBb63lDnu6LzKV-q3Cg, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi:enabled, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi:active, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi:hover, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi:enabled:active:hover, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi.DialogButton:enabled, ._1SyggnJY6qbRSmbZpkK3-H ._1vMU1vG5ZtLihr3mfXUymR, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC:enabled, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC:active, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC:hover, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC:enabled:active:hover, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC.DialogButton:enabled, ._3v2Gg_GCpLHpHQDLFQ7cvI ._3f3VJUtyLXUf_JDFE-BaQ6, ._17M8gvakqjyaw_cLo6ntdl input[type='search']::-webkit-search-cancel-button:hover, .mbFSnoK85dUXHz9VT-YNI._3KGi6ig3JCLHZP-dOsO-Wx, .BasicUI ._1hFrV3_0BponiGRcGE_jg3:hover, .BasicUI ._1hFrV3_0BponiGRcGE_jg3.gpfocus, ._5HZT7qE6px0VNOBQ7q6Nz.gpfocus, ._1X-O1ANz_xeB1j0CZRNFeA.gpfocus, .jD4XY_gqDiLlX0jZqK1MA._1X5wHQgKhsyFOBfnka56DP:hover, ._3mo3QwkH85jTeM4Heu7fjF, ._1-8YObrVay-md19IJJ5mDK, ._3Ak7cNRtzpDWtFgnn6n0-J._1X5wHQgKhsyFOBfnka56DP, .BasicUI ._2yhmcyeUOyM8lt__Skbk9O:hover, .BasicUI ._2yhmcyeUOyM8lt__Skbk9O.gpfocus, ._3-H47wPl1Ng3lh7xGZOPIg.gpfocus, ._3V6804k2yutEiF6IWg8axH.gpfocus, ._1GcAugE5c4nbBUwrA4_xwS._1YAQHDHv4hsPaauccvAFtn:hover, ._2Mo87NUHyjLkjvKcPQxPRu, .j9jQA6QaLJ23lyfuo9nY6, ._1xvIUtLkTrdEk2Ob1MqFcQ._1YAQHDHv4hsPaauccvAFtn, .BasicUI ._30fVm4Rsel-4nUKEiPJgz9:hover, .BasicUI ._30fVm4Rsel-4nUKEiPJgz9.gpfocus, ._2h6KD6p6y4vIgO2Toxx-_K.gpfocus, ._3oKFhPrh1lbp-WtA72Q2Yi.gpfocus, ._3B8wRA4H7e_oSksYNqpSPv._1B1XTNsfuwOaDPAkkr8M42:hover, ._25gii5r23MmAqXvLZj24tK, ._3k90ug209sE23xAMqcM74s, .QFW0BtI4l77AFmv1xLAkx._1B1XTNsfuwOaDPAkkr8M42, .BasicUI ._1lqXpJpRlYvyM2fBx6beHd:hover, .BasicUI ._1lqXpJpRlYvyM2fBx6beHd.gpfocus, ._1k275cE1gk-jpZE5r-37zl.gpfocus, ._4egmnB1wTrDll5Mc_eal8.gpfocus, ._2uW9K6fqc6jZX1XBjnLjw._2kLHZTRgRl0POZfXPcfxks:hover, ._3BvcYKoq-n7GgNwbfFgRAc, .alS2LW_qAwNkYk_GPUC_3, .d9RJTj9G8qU-U9-he2cQx._2kLHZTRgRl0POZfXPcfxks, ._34o03-8cUc3fQX1u650c0L:hover, ._34o03-8cUc3fQX1u650c0L._3fVa8M_7D9Vjz28uYnahhd, ._1X1hrBwjvWglwgv2oIo0zr.gpfocus, .BasicUI ._3x31AgESSlUqX3D4MTHv2m ._37e7DrDNmf1FmsMGA5y0A0 .bACIuqv-b_9TztCczFK19, .BasicUI ._3x31AgESSlUqX3D4MTHv2m ._37e7DrDNmf1FmsMGA5y0A0 ._2JSyABqFEh-v_dwaTnBydR, ._1FFkde8_JKdSiYljLbk0VB, .IIJeieZ-ZPRfIULY7uSDG ._3sfpA6uM8IJuAnrtDiJLZI, .IIJeieZ-ZPRfIULY7uSDG._1wl1mQLRXzpgY5WzEEtDm-, .BasicUI .DY4_wSF8h9T5o46hO5I9V, ._24vXJlAPvB3xAMn1D5WTgv ._1IQVrsAU8HHouq76rRhpXd ._3F9kiZx6X3Y2HCzhNVkjFa, .RoCqXTBUjVBZOysLAWHge, .tGJeFkznK3-BCMgr4GSHi, ._3BBZaNYxbeYSzoc8Wpat0J ._1FZA8-MmuWlfuoH3U91x8K, ._2es8aTNMKhUJ5MqFJJ5zf5, ._3Mp8R2wnoCl6ko0HAX8IHE.Yk-I2az42lZgbInNlu06r, ._3euSFGmYfTklNAvMisNvU6, .KTKZNhGr2va8c2tqKUcHH, ._1sc-BFvGe6huemAE5yVozQ ._2qrpvdd7QiVVxRK8LdZuvx, ._1sc-BFvGe6huemAE5yVozQ ._1gtKGJKNF7LePYMj1G0thY, ._1sc-BFvGe6huemAE5yVozQ ._322VIQXfS-i4Kb7g2Wvsuq, ._2OnwIagz5iEd5wOk6Z9FVJ ._2VCd-2F_zasXcshwdbxHXo, ._4EsG0NitcQDODEeBXMNS4 ._3EvK-5qJkdnPTL_z1RyA7L ._2HnZmed-mYPVaa9i4A47lH ._1horSsSDOLDUtXLkFoSENc, ._3m3_xgqnTKICMikWOA-NtG.F_Vy1zVQmtHYlKsWndE4-.gpfocus, ._3m3_xgqnTKICMikWOA-NtG.F_Vy1zVQmtHYlKsWndE4-.gpfocuswithin, ._3m3_xgqnTKICMikWOA-NtG._2Cj1ImCIbczkbVLC69rJjP:not(._6Dt9tb8Pk5r78_GplsFr6):hover, ._30Cfa_RtfCcvNNH7_LcUON:hover, ._30Cfa_RtfCcvNNH7_LcUON._3enyx9xVrxt-dv1UENf-XP, .KFjZFORv00KdmaEwjssuh:focus, .AuRiJ2ecnP5NI_lXJYN5J, ._2bOpQtX5QAuQxfGhEJ_iYg > span, ._2bOpQtX5QAuQxfGhEJ_iYg > img._1x3UOXJkizqKhkssRfFjSS, .DesktopUI .Oo5JPcEk_erKEYAzYp2nY, ._289eXlJMAn_UUlRH5kHaju, .N8aJrSpxQ6II4CY_aFdYI.QTJZotuAt67vK7Sa2Wjus, ._3AjoLnMNKxYmNTGTJCLfgs._1aml4h4CSJbtrNbX4brUYs, .fi6UDkxJq66MLo2z9wabQ ._2uM3ouyTdzAtXR3ffa7oRg ._2LJMRr1_5XUK4wlt7YMyPi .mh8m9p4PBg_Qrev1bfTzc:hover, ._3OzkVrQFFPv0aV41N4MrHV .fbu3l7kPiBeb3EKCjIb8n ._3ZLaTxSHxeGcoKlIy_-Z0L:hover, ._27m9Qbg4ShilOgwvYZWV8l ._1vG-vFfwpDeNStVbyo1Qy6 ._2wBK7MqJSrj6QCxf3357yL, ._27m9Qbg4ShilOgwvYZWV8l ._1vG-vFfwpDeNStVbyo1Qy6 ._2fYjCJSwdJxdjbi7ysISdL ._2NLwfYHr9KUJZ7LD9nkyva:hover, ._27m9Qbg4ShilOgwvYZWV8l ._1vG-vFfwpDeNStVbyo1Qy6 ._1zaACxBAyMqq2MspuISjix .nzZlhFJAzKTdsKCWil0F9:hover, ._2RAT2vf55Z8zHPpqSHkaW6 .pLUgQmqhYXuq7QbCIVo-5, ._3pofGqV0buiKAfMPEs3_82, ._7AlhCx3XGzBeIrQaCneUD.Eq8Px4ixn5sAFSR6_9wWQ, ._5wILZhsLODVwGfcJ0hKmJ:hover, .MCa4RMSvWJwwWjcZP2wTT ._1oERP7bVictkby2hP4BBva, .RtSv39ZoBOySnb8XQ5hJf._9YK5IY219Pm_F53DAxyYp:not(._1QQWjaXmb1eTHZpeIhQA_5):hover, .RtSv39ZoBOySnb8XQ5hJf._3qhGkQ5qLVNQQ-J2-uPoHt:not(._1QQWjaXmb1eTHZpeIhQA_5):hover, .Utdt7JrpIm5JlpQmqyj1v:hover, ._3lRfTo8Wo3phXfE1DvK6QW:hover, ._3LKQ3S_yqrebeNLF6aeiog:hover, ._13vrqU6oOqmmxrsZSW5O39:hover, ._3arz-hc3FJ0QKXLPRUSaah:hover, ._3zfQA8bEKpisPtsyT4SovP:hover, .zhaKeChn9HPNSMtk0ami_ ._3m0MnUo45wjLOfNLpZ-3KH, ._2rxrVvbku0AC8Qbequ4-z9 ._2SvsKGOQeIoV8laKj5Ql5s ._2YSm1vJtLeKb9BbihsLY1F ._2_4_nZy-T2C3pHa81tGH76 ._3mCrTKGesl-jD-k-buQ13_, ._2rxrVvbku0AC8Qbequ4-z9 ._2SvsKGOQeIoV8laKj5Ql5s ._2YSm1vJtLeKb9BbihsLY1F ._2_4_nZy-T2C3pHa81tGH76 ._1XAm7DWwrTa6XnYYJ5kxAK, ._2rxrVvbku0AC8Qbequ4-z9 ._2SvsKGOQeIoV8laKj5Ql5s ._2YSm1vJtLeKb9BbihsLY1F ._2_4_nZy-T2C3pHa81tGH76 ._2cIK-w-zexbpzoh8jWH-tn, ._20evaxvMeG8jMJ31t-5-L5, ._2a6rfV8TIW2Ngf6EKk-vd ._3ZJ6gL7WvTh8sUOWVhLqe1, .DesktopUI ._2Sj4-UDM-dHSxtxwQ_Pwwz._2Sj4-UDM-dHSxtxwQ_Pwwz ._DialogInputContainer, .aqvbkhC1ejt4s8QvWA-c5 .TSlxCkeUMGwzmg21_WU8-._1W4bbifjEN3KdqKEhpmies, ._2q7nbQP9JNdtqFAxP5RHNZ ._3Cdh-BVkfxPJQNz_etZjUd._181cYsjHaaMo4th6NXPkPR, ._28dkcmodlp5Ooe1EJDdzUs ._2b5Wr4EPgFV-0TlrAIea5- .XBOPCwP2Bo8up1QjGtUiI ._15gxV6Q8_KW_-utK740dEf:hover, ._10T2j3nynZSKnIKIRrTLr4 ._33DvvaAAsKaD30JrKzcL38 ._2xqwHms_kkW3jPhfsUTa8:hover, ._1xeg0ZFm1DNPKbA9uOjFlT ._2U0q8iFEUZp8KxE3zz1C26 ._1Q-eMJi4hHWapnM5jkXqg7, ._1xeg0ZFm1DNPKbA9uOjFlT ._2U0q8iFEUZp8KxE3zz1C26 ._3hpEn4H6tjIGLbf8GKA0vS ._2TsagsVi0bFDnNztolUHP4:hover, ._1xeg0ZFm1DNPKbA9uOjFlT ._2U0q8iFEUZp8KxE3zz1C26 ._1Hz4oAP9fiba9H98tjnior ._3a1Y1FB5NkaJJ0iV5-qUbJ:hover, ._2AtQdZFU-mOGE-_3SuQKkw, ._1J8umaxlHnD4poewN6r8wp, ._3QLt_cnTY9p8pNOj9jxTxR, .NoRFSLSfwRijJQt7R51OT, ._1llZalHthucWjyKqSkf7fR, ._3yP_pf4vx1Q4W0mt2DR32P, ._19SMSHLlXqSLnXM3NjDNBS, ._1Ze1RZ7I8e5cSlaWAl48bh, ._2MjBd1kKOEyVfqBN5OQOb1, ._2swvcAycL4d0UoHFDoe6-d, ._3i-XV362MvNEX3j_oWQDmQ, ._3s28A0XlOXUOAWRIuBKHuH, ._3U3h5KQ5DocAUo4lO8cL5l, ._1FyBL6obxHQ2Z2CsaV2Gbz .DialogBody ._3sXdOJ9DEh5zdS54_ptwgW ._1SKB0Xc7OpWlOlr-wSi8ho, ._1FyBL6obxHQ2Z2CsaV2Gbz .DialogBody ._3ZhiKhciPyiGGxDFuGOYpc .pht3SaejGcAJEjNG8d6nd ._2TJyz1F52D-aTOe8RdwFIK, ._1FyBL6obxHQ2Z2CsaV2Gbz .DialogBody ._3ZhiKhciPyiGGxDFuGOYpc .pht3SaejGcAJEjNG8d6nd .iWdskI4in7pZbS0ETm5QQ .hh4HHQrSWl4R_8NqlKs5m ._2AQozUFcCfBh1F-oJjSTzj"
+    selector: "button.DialogButton, ._1l0LmmqDUXH19SjfELddn7, .DesktopUI .title-area-icon:hover, .friendsui-container .title-area-icon:hover, .DesktopUI .PP7LM0Ow1K5qkR8WElLpt, ._3qIuY9S_vXm3IQS-uE9SRS .PP7LM0Ow1K5qkR8WElLpt, ._1ABCOz8DSrl-YJdh1xD-m0, ._1ABCOz8DSrl-YJdh1xD-m0._1dDpSuaJBGZzS41s0SPk4c, span._3nqxIgL0a0DbPZHRZRzWsp, .HijmccPB1BKyhOwhX1EVl._3-_jME_xsuvgT3Dvq4bw_q._3hmGW9wIxNIoPPu1aS7rFm, .HijmccPB1BKyhOwhX1EVl._3-_jME_xsuvgT3Dvq4bw_q._3hmGW9wIxNIoPPu1aS7rFm:hover, .HijmccPB1BKyhOwhX1EVl:not(._3-_jME_xsuvgT3Dvq4bw_q) + .HijmccPB1BKyhOwhX1EVl:not(._3-_jME_xsuvgT3Dvq4bw_q)::before, ._1-vlriAtKYDViAEunue4VO._2DpXjzK3WWsOtUWUrcuOG7, ._1Hye7o1wYIfc9TE9QKRW4T, ._3LLH_F43MTu6UtG4Z3kudv, .eKmEXJCm_lgme24Fp_HWt._2HFrmMgB38Ike5w4rVxzEX.gpfocus, .eKmEXJCm_lgme24Fp_HWt._2HFrmMgB38Ike5w4rVxzEX.gpfocuswithin, .eKmEXJCm_lgme24Fp_HWt._2HuzvKQ2QMUJ-JJOeApaF1:not(.aIeh3X5T2M074RLW1qn6_):hover, ._2mL2HfT5AkDXRi1YBnRWKa:focus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .lat0M-V5X4uYd6Mpm1DJ1 ._9Ig1o0jVRia2uf_FKR3rs, .lat0M-V5X4uYd6Mpm1DJ1 ._2Z68vjdOnUDA2ULQG41JVV, .lat0M-V5X4uYd6Mpm1DJ1 ._25eT23F0cV5lmT3tXAIA56, ._464mFQmvIW2e9TQypXX7W ._2ltn2BK4fnrPEGzNwxx6bx button.DialogButton:enabled:active.gpfocus, ._3qYm9oxf8MdyvQDJgbfCrF ._10OzYaCdn7cgVMec9ozEJG.GamepadMode, .GamepadMode ._3qYm9oxf8MdyvQDJgbfCrF ._10OzYaCdn7cgVMec9ozEJG, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, ._3RPaPwdCZoCW6eX8k9QyRj ._2Uf-0Z6C7U0MMzWK80PYzJ.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, ._2XZq-_f6npaQdAgeRzKIkz.Yd-DsWkYiFiYwpci--Yk_.GamepadMode.gpfocus, .GamepadMode ._2XZq-_f6npaQdAgeRzKIkz.Yd-DsWkYiFiYwpci--Yk_.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .friendGroup .groupName.gpfocus, .FriendsListContent.gpfocus .friendlistListContainer, .friendsContainer.gpfocus, .msg div.ChatMessageOpenGraph.gpfocus, .msg div.SteamPublishedFile.gpfocus, .ChatMessageInvite.gpfocus, .inviteLinkContainer .DialogDropDown._DialogInputContainer:hover, .msg.gpfocus, .FriendPicker .FriendPickerFriendList.GamepadMode.gpfocus, .GamepadMode .FriendPicker .FriendPickerFriendList.gpfocus, .rolePriorityButton, .rolePriorityButton.Disabled:active, .rolePriorityButton.Disabled:hover, .rolePriorityButton.Disabled, ._3TvBVwaH8eIBabTdki35oe .QAVElkR0V7KPXLjPVsvl-:focus, ._3rsQRA6-lR_jrdiuv3ARnf .tNl7CupYn5jcZaRWX6PU0._1DMzCviYCYOj6lKga1y_vt, ._1xfC8oO6JVNnioU1NPTN9s, ._1LWDAthWNhS7CyjQqjbeoS.YgnZYhUBZBiUJwuMUvxYw.gpfocus, ._1LWDAthWNhS7CyjQqjbeoS.YgnZYhUBZBiUJwuMUvxYw.gpfocuswithin, ._1LWDAthWNhS7CyjQqjbeoS._15S9pg9Y-g9PGES94IuSQA:not(.hBJA7sc7szpcoeOdRRfsP):hover, ._17CvBVp1rwECBn2FRb4oMA:hover, ._17CvBVp1rwECBn2FRb4oMA._1Rmvuh4adSSWxOVlDHISQO, ._3glxw5rYlV6DTRgH3dHWPD:focus, ._17SQWViInfB-hmYYLoK4Yw:hover, ._17SQWViInfB-hmYYLoK4Yw:active, ._1TR3CCCdSmI-0MXucYBuP2 ._6Z2AOU-R-8aK7KZevey0W, .BasicUI ._170Npw5h84elypMSQ8zNDI ._1ennWu_xj2YF8FRYgJ2M2H ._1axoiZsC1RBp22JQmxiBIc.gpfocuswithin, ._1xPZwgYI7sXtyFt2n8ZjtP, ._1ZpBQtDqcKBbfIIv01Vs1R > div.DesktopUI, .DesktopUI ._1ZpBQtDqcKBbfIIv01Vs1R > div, ._1-nHjRywUoX7Mpyc6JOPaQ, ._2IEorvaTnkOBZw3PEDXZoB, ._12aBP1DmpEKuMxfFuCMbiN:focus, ._12aBP1DmpEKuMxfFuCMbiN:hover, ._3VQeLk37GAZSmurTc4HPP6, ._3Lz1Rs6a2Lc6Mx3J86VKKE, ._2n6FNLKyb6al_YPk13xS7S ._2qURXDJ4ZtfSVOesDk7A73 .DialogCheckbox, .BasicUI ._2n6FNLKyb6al_YPk13xS7S ._2RCSUgg2X_uF_C0e1lrcqc:focus, ._1WKUOT3FdB9-48MMP0Tz9l, ._1kyPoKPv8_QS8nK7zedHW ._3ggB6QN4NkLZyOYn8xj5N7._16L8gDKLHwbnMVEmoFCK9, ._28eIRmQ229ntDIyQXTn3Ub, ._28eIRmQ229ntDIyQXTn3Ub.QE3sHW9puNTAjiRDY71Xy, ._29AJUo6aKT93gX24N5WFj_, .xgdATZWePJFXYrEbin8y9 ._10hh85J75faHJ8ChhjlzLl, ._13LoHE22iGo7eWHNFp5f9L, ._3xXvCbPSIbZttSKUFZbFe-, ._1JVxK7k1dVGT-XnDTUFrIC, ._3WR6QIYfn7Vo3gVdKjjFuW, ._3WR6QIYfn7Vo3gVdKjjFuW ._2rMgXYkzAhJXWsyI9YRY11, ._35iX6Ylrzw0fN8AHhcIlGF, .y7Rs2hclga_Ij4MsMiMdx ._10RZezvQlWdLLbkgRIS9_4, ._6em9hiNtkrdaHE8eVfq0P ._365PZ8BVgd7sz6-xR9E9yb .rYp_PTAXV9D7Jc5c756Re, ._2YoYTMvXU6ZiyEtsi0W2Lo, ._1rhLTraGkRDOPJslCL3i9C:hover, ._1rhLTraGkRDOPJslCL3i9C._2_K-vDkSsSw6FxrfZL-ScT, .u04UCICvObTJ4FUr9RQen, ._1lcizT_Nbxsk484XzTtcFf, ._2JvQPEForHWVgljtxxAwRP, ._22fHb5-teK8S1sxdxVu9yz.gpfocus, ._3LzXZkJi8bsPoHzXEDbLER.gpfocus, .snegceTtDFk1Ok-EUE8fd.gpfocus, .HYloJyr41RFbSFoc8RY3w.gpfocus, ._3Rk61GMptJMR1oaiUCjLyL, ._5j8Im-8lAIRRboL2_jZbQ ._26uPMBCPxQYJ8EBcqiNu8P.gpfocus, ._2IWpfqj8UL5hUs7n-pxnUy ._3sqYFYR9Cl3T6Iy-0a3EJ2:hover, ._3jYltbvkgQtLaooGJYcjJY ._2CKq4dAZDTlb7svd2NHxi6:hover, ._1BwVZqfM73ZtBVsNs3ZcMD, .LclHwcOfHFpwObYMD1HLa ._3H2GezG50hog8gSDj-qbx1 ._3EWVuoln1WAvpEaPNfpift, .LclHwcOfHFpwObYMD1HLa ._3H2GezG50hog8gSDj-qbx1 ._1d8CbcBnA6t3lsxYdnMv1h, .q5OA-x6LcVkvtLCGp-8JC .DialogBody .DialogBodyText .isIfZv25e7VAf6QG7PMrF .YvsXGGpc_ep7jT-hmQxZe, ._2TAQYpbxatDYN3Ex76KX5u .DialogBody .DialogBodyText ._7jaC6UFFrvcKq2UlJr1Pb .Cw--cBWy7v1Ey1JF0VkBN, ._24O5i9aa5PKJmbP0tL_Jbf, .BasicUI button.DialogButton._3Cdin80d-hVsakHUZboheb._3nJyYxGQ3kdwwabPmxNnMe:not(.gpfocus), ._1GdR5LbENV7LOGROJBxohI._1GdR5LbENV7LOGROJBxohI.DialogButton:enabled, ._21P7c4MWmsU2QSZeL-uyZo.gpfocus:not(._74yh4KBx-CqtDEw0dDxpH) ._1VNuYHM6BPBOJspC6zPf5r.IbePLaw-vSvhG1GTenYFg, ._1VNuYHM6BPBOJspC6zPf5r:hover, ._1VNuYHM6BPBOJspC6zPf5r._3-SbBb63lDnu6LzKV-q3Cg, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi:enabled, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi:active, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi:hover, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi:enabled:active:hover, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi.DialogButton:enabled, ._1SyggnJY6qbRSmbZpkK3-H ._1vMU1vG5ZtLihr3mfXUymR, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC:enabled, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC:active, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC:hover, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC:enabled:active:hover, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC.DialogButton:enabled, ._3v2Gg_GCpLHpHQDLFQ7cvI ._3f3VJUtyLXUf_JDFE-BaQ6, ._17M8gvakqjyaw_cLo6ntdl input[type='search']::-webkit-search-cancel-button:hover, .mbFSnoK85dUXHz9VT-YNI._3KGi6ig3JCLHZP-dOsO-Wx, .BasicUI ._1hFrV3_0BponiGRcGE_jg3:hover, .BasicUI ._1hFrV3_0BponiGRcGE_jg3.gpfocus, ._5HZT7qE6px0VNOBQ7q6Nz.gpfocus, ._1X-O1ANz_xeB1j0CZRNFeA.gpfocus, .jD4XY_gqDiLlX0jZqK1MA._1X5wHQgKhsyFOBfnka56DP:hover, ._3mo3QwkH85jTeM4Heu7fjF, ._1-8YObrVay-md19IJJ5mDK, ._3Ak7cNRtzpDWtFgnn6n0-J._1X5wHQgKhsyFOBfnka56DP, .BasicUI ._2yhmcyeUOyM8lt__Skbk9O:hover, .BasicUI ._2yhmcyeUOyM8lt__Skbk9O.gpfocus, ._3-H47wPl1Ng3lh7xGZOPIg.gpfocus, ._3V6804k2yutEiF6IWg8axH.gpfocus, ._1GcAugE5c4nbBUwrA4_xwS._1YAQHDHv4hsPaauccvAFtn:hover, ._2Mo87NUHyjLkjvKcPQxPRu, .j9jQA6QaLJ23lyfuo9nY6, ._1xvIUtLkTrdEk2Ob1MqFcQ._1YAQHDHv4hsPaauccvAFtn, .BasicUI ._30fVm4Rsel-4nUKEiPJgz9:hover, .BasicUI ._30fVm4Rsel-4nUKEiPJgz9.gpfocus, ._2h6KD6p6y4vIgO2Toxx-_K.gpfocus, ._3oKFhPrh1lbp-WtA72Q2Yi.gpfocus, ._3B8wRA4H7e_oSksYNqpSPv._1B1XTNsfuwOaDPAkkr8M42:hover, ._25gii5r23MmAqXvLZj24tK, ._3k90ug209sE23xAMqcM74s, .QFW0BtI4l77AFmv1xLAkx._1B1XTNsfuwOaDPAkkr8M42, .BasicUI ._1lqXpJpRlYvyM2fBx6beHd:hover, .BasicUI ._1lqXpJpRlYvyM2fBx6beHd.gpfocus, ._1k275cE1gk-jpZE5r-37zl.gpfocus, ._4egmnB1wTrDll5Mc_eal8.gpfocus, ._2uW9K6fqc6jZX1XBjnLjw._2kLHZTRgRl0POZfXPcfxks:hover, ._3BvcYKoq-n7GgNwbfFgRAc, .alS2LW_qAwNkYk_GPUC_3, .d9RJTj9G8qU-U9-he2cQx._2kLHZTRgRl0POZfXPcfxks, ._34o03-8cUc3fQX1u650c0L:hover, ._34o03-8cUc3fQX1u650c0L._3fVa8M_7D9Vjz28uYnahhd, ._1X1hrBwjvWglwgv2oIo0zr.gpfocus, .BasicUI ._3x31AgESSlUqX3D4MTHv2m ._37e7DrDNmf1FmsMGA5y0A0 .bACIuqv-b_9TztCczFK19, .BasicUI ._3x31AgESSlUqX3D4MTHv2m ._37e7DrDNmf1FmsMGA5y0A0 ._2JSyABqFEh-v_dwaTnBydR, ._1FFkde8_JKdSiYljLbk0VB, .IIJeieZ-ZPRfIULY7uSDG ._3sfpA6uM8IJuAnrtDiJLZI, .IIJeieZ-ZPRfIULY7uSDG._1wl1mQLRXzpgY5WzEEtDm-, .BasicUI .DY4_wSF8h9T5o46hO5I9V, ._24vXJlAPvB3xAMn1D5WTgv ._1IQVrsAU8HHouq76rRhpXd ._3F9kiZx6X3Y2HCzhNVkjFa, .RoCqXTBUjVBZOysLAWHge, .tGJeFkznK3-BCMgr4GSHi, ._3BBZaNYxbeYSzoc8Wpat0J ._1FZA8-MmuWlfuoH3U91x8K, ._2es8aTNMKhUJ5MqFJJ5zf5, ._3Mp8R2wnoCl6ko0HAX8IHE.Yk-I2az42lZgbInNlu06r, ._3euSFGmYfTklNAvMisNvU6, .KTKZNhGr2va8c2tqKUcHH, ._1sc-BFvGe6huemAE5yVozQ ._2qrpvdd7QiVVxRK8LdZuvx, ._1sc-BFvGe6huemAE5yVozQ ._1gtKGJKNF7LePYMj1G0thY, ._1sc-BFvGe6huemAE5yVozQ ._322VIQXfS-i4Kb7g2Wvsuq, ._2OnwIagz5iEd5wOk6Z9FVJ ._2VCd-2F_zasXcshwdbxHXo, ._4EsG0NitcQDODEeBXMNS4 ._3EvK-5qJkdnPTL_z1RyA7L ._2HnZmed-mYPVaa9i4A47lH ._1horSsSDOLDUtXLkFoSENc, ._3m3_xgqnTKICMikWOA-NtG.F_Vy1zVQmtHYlKsWndE4-.gpfocus, ._3m3_xgqnTKICMikWOA-NtG.F_Vy1zVQmtHYlKsWndE4-.gpfocuswithin, ._3m3_xgqnTKICMikWOA-NtG._2Cj1ImCIbczkbVLC69rJjP:not(._6Dt9tb8Pk5r78_GplsFr6):hover, ._30Cfa_RtfCcvNNH7_LcUON:hover, ._30Cfa_RtfCcvNNH7_LcUON._3enyx9xVrxt-dv1UENf-XP, .KFjZFORv00KdmaEwjssuh:focus, .AuRiJ2ecnP5NI_lXJYN5J, ._2bOpQtX5QAuQxfGhEJ_iYg > span, ._2bOpQtX5QAuQxfGhEJ_iYg > img._1x3UOXJkizqKhkssRfFjSS, .DesktopUI .Oo5JPcEk_erKEYAzYp2nY, ._289eXlJMAn_UUlRH5kHaju, .N8aJrSpxQ6II4CY_aFdYI.QTJZotuAt67vK7Sa2Wjus, ._3AjoLnMNKxYmNTGTJCLfgs._1aml4h4CSJbtrNbX4brUYs, .fi6UDkxJq66MLo2z9wabQ ._2uM3ouyTdzAtXR3ffa7oRg ._2LJMRr1_5XUK4wlt7YMyPi .mh8m9p4PBg_Qrev1bfTzc:hover, ._3OzkVrQFFPv0aV41N4MrHV .fbu3l7kPiBeb3EKCjIb8n ._3ZLaTxSHxeGcoKlIy_-Z0L:hover, ._27m9Qbg4ShilOgwvYZWV8l ._1vG-vFfwpDeNStVbyo1Qy6 ._2wBK7MqJSrj6QCxf3357yL, ._27m9Qbg4ShilOgwvYZWV8l ._1vG-vFfwpDeNStVbyo1Qy6 ._2fYjCJSwdJxdjbi7ysISdL ._2NLwfYHr9KUJZ7LD9nkyva:hover, ._27m9Qbg4ShilOgwvYZWV8l ._1vG-vFfwpDeNStVbyo1Qy6 ._1zaACxBAyMqq2MspuISjix .nzZlhFJAzKTdsKCWil0F9:hover, ._2RAT2vf55Z8zHPpqSHkaW6 .pLUgQmqhYXuq7QbCIVo-5, ._3pofGqV0buiKAfMPEs3_82, ._7AlhCx3XGzBeIrQaCneUD.Eq8Px4ixn5sAFSR6_9wWQ, ._5wILZhsLODVwGfcJ0hKmJ:hover, .MCa4RMSvWJwwWjcZP2wTT ._1oERP7bVictkby2hP4BBva, .RtSv39ZoBOySnb8XQ5hJf._9YK5IY219Pm_F53DAxyYp:not(._1QQWjaXmb1eTHZpeIhQA_5):hover, .RtSv39ZoBOySnb8XQ5hJf._3qhGkQ5qLVNQQ-J2-uPoHt:not(._1QQWjaXmb1eTHZpeIhQA_5):hover, .Utdt7JrpIm5JlpQmqyj1v:hover, ._3lRfTo8Wo3phXfE1DvK6QW:hover, ._3LKQ3S_yqrebeNLF6aeiog:hover, ._13vrqU6oOqmmxrsZSW5O39:hover, ._3arz-hc3FJ0QKXLPRUSaah:hover, ._3zfQA8bEKpisPtsyT4SovP:hover, .zhaKeChn9HPNSMtk0ami_ ._3m0MnUo45wjLOfNLpZ-3KH, ._2rxrVvbku0AC8Qbequ4-z9 ._2SvsKGOQeIoV8laKj5Ql5s ._2YSm1vJtLeKb9BbihsLY1F ._2_4_nZy-T2C3pHa81tGH76 ._3mCrTKGesl-jD-k-buQ13_, ._2rxrVvbku0AC8Qbequ4-z9 ._2SvsKGOQeIoV8laKj5Ql5s ._2YSm1vJtLeKb9BbihsLY1F ._2_4_nZy-T2C3pHa81tGH76 ._1XAm7DWwrTa6XnYYJ5kxAK, ._2rxrVvbku0AC8Qbequ4-z9 ._2SvsKGOQeIoV8laKj5Ql5s ._2YSm1vJtLeKb9BbihsLY1F ._2_4_nZy-T2C3pHa81tGH76 ._2cIK-w-zexbpzoh8jWH-tn, ._20evaxvMeG8jMJ31t-5-L5, ._2a6rfV8TIW2Ngf6EKk-vd ._3ZJ6gL7WvTh8sUOWVhLqe1, .DesktopUI ._2Sj4-UDM-dHSxtxwQ_Pwwz._2Sj4-UDM-dHSxtxwQ_Pwwz ._DialogInputContainer, .aqvbkhC1ejt4s8QvWA-c5 .TSlxCkeUMGwzmg21_WU8-._1W4bbifjEN3KdqKEhpmies, ._2q7nbQP9JNdtqFAxP5RHNZ ._3Cdh-BVkfxPJQNz_etZjUd._181cYsjHaaMo4th6NXPkPR, ._28dkcmodlp5Ooe1EJDdzUs ._2b5Wr4EPgFV-0TlrAIea5- .XBOPCwP2Bo8up1QjGtUiI ._15gxV6Q8_KW_-utK740dEf:hover, ._10T2j3nynZSKnIKIRrTLr4 ._33DvvaAAsKaD30JrKzcL38 ._2xqwHms_kkW3jPhfsUTa8:hover, ._1xeg0ZFm1DNPKbA9uOjFlT ._2U0q8iFEUZp8KxE3zz1C26 ._1Q-eMJi4hHWapnM5jkXqg7, ._1xeg0ZFm1DNPKbA9uOjFlT ._2U0q8iFEUZp8KxE3zz1C26 ._3hpEn4H6tjIGLbf8GKA0vS ._2TsagsVi0bFDnNztolUHP4:hover, ._1xeg0ZFm1DNPKbA9uOjFlT ._2U0q8iFEUZp8KxE3zz1C26 ._1Hz4oAP9fiba9H98tjnior ._3a1Y1FB5NkaJJ0iV5-qUbJ:hover, ._2AtQdZFU-mOGE-_3SuQKkw, ._1J8umaxlHnD4poewN6r8wp, ._3QLt_cnTY9p8pNOj9jxTxR, .NoRFSLSfwRijJQt7R51OT, ._1llZalHthucWjyKqSkf7fR, ._3yP_pf4vx1Q4W0mt2DR32P, ._19SMSHLlXqSLnXM3NjDNBS, ._1Ze1RZ7I8e5cSlaWAl48bh, ._2MjBd1kKOEyVfqBN5OQOb1, ._2swvcAycL4d0UoHFDoe6-d, ._3i-XV362MvNEX3j_oWQDmQ, ._3s28A0XlOXUOAWRIuBKHuH, ._3U3h5KQ5DocAUo4lO8cL5l, ._1FyBL6obxHQ2Z2CsaV2Gbz .DialogBody ._3sXdOJ9DEh5zdS54_ptwgW ._1SKB0Xc7OpWlOlr-wSi8ho, ._1FyBL6obxHQ2Z2CsaV2Gbz .DialogBody ._3ZhiKhciPyiGGxDFuGOYpc .pht3SaejGcAJEjNG8d6nd ._2TJyz1F52D-aTOe8RdwFIK, ._1FyBL6obxHQ2Z2CsaV2Gbz .DialogBody ._3ZhiKhciPyiGGxDFuGOYpc .pht3SaejGcAJEjNG8d6nd .iWdskI4in7pZbS0ETm5QQ .hh4HHQrSWl4R_8NqlKs5m ._2AQozUFcCfBh1F-oJjSTzj"
   },
 }
 
@@ -2656,7 +3242,7 @@ function setupEnhancedColorModalEvents(overlay, config) {
           applyColorConfig(config)
         }
       })
-    }
+    } 
 
     if (section) {
       setupColorEvents(section, key, config, addBtn)
