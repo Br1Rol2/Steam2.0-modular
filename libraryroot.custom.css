@@ -132,7 +132,6 @@ button.DialogButton, .DesktopUI .title-area-icon:hover, .friendsui-container .ti
   display: none !important;
 }
 
-/* Dynamic spacing for new buttons */
-#manual-toggle-container {
-    margin-right: -272px !important; /* Compensates for the space taken by the new buttons */
+._23SnllqT_AqZ1C_QHcNQ4Z{ /* Margin for the games panel because the gamelist arrow*/
+    margin-left: 15px;
 }

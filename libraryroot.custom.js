@@ -122,6 +122,7 @@ observeFriendsListPanel();
   const GRID_CLASSES = ["_3vHkmRShhzwd67_MtEq8-n", "_3DJLGrqzoQ5vMDI_4VG502", "Panel"]
   const BOTTOM_PANEL_CLASS = "_3vCzSrrXZzZjVJFZNg9SGu"
   const GAME_SELECTOR = 'div[role="gridcell"]'
+  const ROW_SELECTOR = 'div[role="row"]'
   const MANUAL_ORDER_KEY = "steam_game_manual_order_v3"
   const MANUAL_ORDER_ENABLED_KEY = "steam_manual_order_enabled"
 
@@ -151,132 +152,166 @@ observeFriendsListPanel();
   // Create CSS styles for modal
   const style = document.createElement("style")
   style.textContent = `
-        /* Toggle visual slider */
+        /* ── Main trigger button ── */
         #manual-toggle-container {
-            display: none; /* Hidden by default until Ready to Play is active */
+            display: none;
             align-items: center;
-            margin: 10px;
+            margin: 0 6px;
             user-select: none;
-            font-size: 14px;
-            color: white;
-            z-index: 1000;
             position: relative;
-            transition: opacity 0.3s ease;
         }
 
-        .toggle-arrow {
+        #panel-trigger-btn {
+            background: rgba(40, 40, 40, 0.16);
+            color: #ccc;
+            border: 1px solid rgba(255,255,255,0.15);
+            padding: 5px 10px;
+            border-radius: 6px;
             cursor: pointer;
-            font-size: 18px;
-            padding: 2px;
-            border-radius: 4px;
-            background: rgba(51, 51, 51, 0.8);
-            transition: all 0.3s ease;
-            margin-right: 5px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: background 0.2s, border-color 0.2s;
+            white-space: nowrap;
         }
-
-        .toggle-arrow:hover {
-            background: rgba(51, 51, 51, 1);
-            transform: scale(1.1);
+        #panel-trigger-btn:hover {
+            background: rgba(60, 60, 60, 0.3);
+            border-color: rgba(255,255,255,0.3);
+            color: #fff;
         }
-
-        .toggle-arrow.collapsed {
+        #panel-trigger-btn.active {
+            border-color: #2196F3;
+            color: #fff;
+        }
+        #panel-trigger-btn .trigger-caret {
+            font-size: 9px;
+            opacity: 0.6;
+            transition: transform 0.2s;
+        }
+        #panel-trigger-btn.active .trigger-caret {
             transform: rotate(180deg);
         }
 
-        .toggle-options {
+        /* ── Dropdown panel (opens upward) ── */
+        #panel-dropdown {
+            display: none;
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 0;
+            background: #1a1a1aee;
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 8px;
+            padding: 6px 0;
+            min-width: 190px;
+            box-shadow: 0 -6px 24px rgba(0,0,0,0.6);
+            z-index: 9999;
+        }
+        #panel-dropdown.open {
+            display: block;
+            animation: dropup 0.15s ease;
+        }
+        @keyframes dropup {
+            from { opacity: 0; transform: translateY(6px); }
+            to   { opacity: 1; transform: translateY(0);   }
+        }
+
+        /* ── Dropdown rows ── */
+        .panel-row {
             display: flex;
             align-items: center;
-            gap: 10px;
-            transition: all 0.3s ease;
-            opacity: 1;
-            max-height: 50px;
-            overflow: hidden;
+            justify-content: space-between;
+            padding: 7px 14px;
+            gap: 12px;
+            transition: background 0.15s;
         }
-
-        .toggle-options.collapsed {
-            opacity: 0;
-            max-height: 0;
-            margin: 0;
-            padding: 0;
+        .panel-row:hover {
+            background: rgba(255,255,255,0.05);
         }
-
-        #customize-colors-btn {
-            background: linear-gradient(135deg, #9C27B0, #7B1FA2);
-            color: white;
-            border: none;
-            padding: 6px 12px;
-            border-radius: 4px;
-            cursor: pointer;
+        .panel-row-label {
             font-size: 12px;
-            font-weight: bold;
-            transition: all 0.3s ease;
+            color: #ccc;
+            flex: 1;
+            white-space: nowrap;
+        }
+        .panel-row-label.active-label {
+            color: #fff;
         }
 
-        #customize-colors-btn:hover {
-            background: linear-gradient(135deg, #7B1FA2, #6A1B9A);
-            transform: translateY(-1px);
-        }
-        .switch {
-            position: relative;
-            display: inline-block;
-            width: 40px;
-            height: 22px;
-            margin-right: 8px;
-        }
-        .switch input { 
-            opacity: 0; 
-            width: 0; 
-            height: 0; 
-        }
-        .slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background-color: #ccc;
-            border-radius: 22px;
-            transition: .4s;
-        }
-        .slider:before {
-            position: absolute;
-            content: "";
-            height: 18px;
-            width: 18px;
-            left: 2px;
-            bottom: 2px;
-            background-color: white;
-            border-radius: 50%;
-            transition: .4s;
-        }
-        input:checked + .slider {
-            background-color: #2196F3;
-        }
-        input:checked + .slider:before {
-            transform: translateX(18px);
+        /* ── Divider ── */
+        .panel-divider {
+            height: 1px;
+            background: rgba(255,255,255,0.08);
+            margin: 4px 0;
         }
 
-        /* Button to open modal */
+        /* ── Reorder button (inside dropdown) ── */
         #open-reorder-modal {
             background: linear-gradient(135deg, #4CAF50, #45a049);
             color: white;
             border: none;
-            padding: 6px 12px;
-            border-radius: 6px;
+            padding: 5px 10px;
+            border-radius: 5px;
             cursor: pointer;
-            font-size: 12px;
+            font-size: 11px;
             font-weight: bold;
-            margin-left: 10px;
-            transition: all 0.3s ease;
+            transition: all 0.2s;
+            white-space: nowrap;
         }
         #open-reorder-modal:hover {
             background: linear-gradient(135deg, #45a049, #3d8b40);
-            transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
         }
 
-        /* Hidden file input */
-        #import-file-input {
-            display: none;
+        /* ── Colors button (inside dropdown) ── */
+        #customize-colors-btn {
+            background: linear-gradient(135deg, #9C27B0, #7B1FA2);
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: bold;
+            transition: all 0.2s;
+            white-space: nowrap;
         }
+        #customize-colors-btn:hover {
+            background: linear-gradient(135deg, #7B1FA2, #6A1B9A);
+        }
+
+        /* ── Switch ── */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 34px;
+            height: 19px;
+            flex-shrink: 0;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #444;
+            border-radius: 19px;
+            transition: .3s;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 15px;
+            width: 15px;
+            left: 2px;
+            bottom: 2px;
+            background-color: white;
+            border-radius: 50%;
+            transition: .3s;
+        }
+        input:checked + .slider { background-color: #2196F3; }
+        input:checked + .slider:before { transform: translateX(15px); }
+
+        /* Hidden file input */
+        #import-file-input { display: none; }
 
         /* Modal overlay */
         #reorder-modal-overlay {
@@ -567,26 +602,18 @@ observeFriendsListPanel();
     // Find Ready to Play button by SVG viewBox
     const svg = document.querySelector('svg[viewBox="-305.5 396.5 256 256"]')
     if (!svg) return false
-    
+
     const readyToPlayButton = svg.closest('[role="button"]')
     if (!readyToPlayButton) return false
 
-    // Check multiple indicators of active state
-    const buttonClasses = readyToPlayButton.className
-    const computedStyle = window.getComputedStyle(readyToPlayButton)
-    const svgStyle = window.getComputedStyle(svg)
-    
-    return (
-      readyToPlayButton.classList.contains("active") ||
-      readyToPlayButton.getAttribute("aria-pressed") === "true" ||
-      readyToPlayButton.style.opacity !== "0.5" ||
-      !readyToPlayButton.classList.contains("inactive") ||
-      readyToPlayButton.getAttribute("data-active") === "true" ||
-      computedStyle.opacity !== "0.5" && computedStyle.filter !== "grayscale(1)" ||
-      buttonClasses.includes("selected") || buttonClasses.includes("pressed") || buttonClasses.includes("toggled") ||
-      svgStyle.opacity !== "0.5" && svgStyle.filter !== "grayscale(1)" && svgStyle.fill !== "rgb(128, 128, 128)" ||
-      !buttonClasses.includes("disabled") && !buttonClasses.includes("inactive") && computedStyle.pointerEvents !== "none"
-    )
+    // Reliable, mutually-exclusive checks only (no broad OR chains that
+    // evaluate true almost unconditionally)
+    if (readyToPlayButton.getAttribute("aria-pressed") === "true") return true
+    if (readyToPlayButton.getAttribute("data-active") === "true") return true
+    if (readyToPlayButton.classList.contains("active")) return true
+    if (readyToPlayButton.classList.contains("selected")) return true
+
+    return false
   }
 
   // ============================================================================
@@ -876,17 +903,36 @@ observeFriendsListPanel();
    * @returns {string} - Unique game identifier
    */
   function getGameId(gameCell) {
-    // First try to get Steam App ID from link
-    const link = gameCell.querySelector('a[role="link"]')
-    if (link) {
-      const href = link.getAttribute("href") || ""
+    // Try <a role="link"> first (old structure)
+    const linkA = gameCell.querySelector('a[role="link"]')
+    if (linkA) {
+      const href = linkA.getAttribute("href") || ""
       const match = href.match(/app\/(\d+)/)
       if (match) return match[1]
     }
 
+    // New structure: Steam uses div[role="link"] — no href, but image src contains app ID
+    // e.g. /assets/271590/library_600x900.jpg  or  /customimages/730p.jpg
+    const img = gameCell.querySelector("img")
+    if (img && img.src) {
+      // /assets/<appid>/...  pattern
+      const assetMatch = img.src.match(/\/assets\/(\d+)\//)
+      if (assetMatch) return assetMatch[1]
+      // /customimages/<appid>p.  pattern
+      const customMatch = img.src.match(/\/customimages\/(\d+)p\./)
+      if (customMatch) return customMatch[1]
+    }
+
     // Fallback: create a hash from the game title
     const gameTitle = getGameTitle(gameCell)
-    
+
+    // If we couldn't even get a title, this card is in a transient/incomplete
+    // DOM state (e.g. mid tab-transition, image not loaded yet). Return null
+    // instead of a colliding hash so callers can skip it safely.
+    if (!gameTitle || gameTitle === "Unknown Game") {
+      return null
+    }
+
     // Create a simple hash from the title
     let hash = 0
     for (let i = 0; i < gameTitle.length; i++) {
@@ -942,8 +988,12 @@ observeFriendsListPanel();
    * @returns {boolean} - True if old format
    */
   function isOldFormatId(gameId) {
-    // Old format IDs don't start with "game_" and are usually base64-like
-    return !gameId.startsWith("game_") && gameId.length <= 16
+    // Numeric IDs (from image src) and "game_" hash IDs are both current formats
+    // Old format IDs were base64-like strings (no prefix, not purely numeric)
+    if (!gameId) return false
+    if (/^\d+$/.test(gameId)) return false        // numeric → current format
+    if (gameId.startsWith("game_")) return false   // hash → current format
+    return true  // anything else → old btoa format
   }
 
   /**
@@ -962,6 +1012,18 @@ observeFriendsListPanel();
    * @returns {string} - Game title
    */
   function getGameTitle(gameCell) {
+    // New Steam structure: the title is in a hidden div whose id is referenced by aria-labelledby
+    // The first id in aria-labelledby on the div[role="link"] holds the game title
+    const linkDiv = gameCell.querySelector('[role="link"]')
+    if (linkDiv) {
+      const labelledBy = linkDiv.getAttribute("aria-labelledby") || ""
+      const firstLabelId = labelledBy.trim().split(/\s+/)[0]
+      if (firstLabelId) {
+        const labelEl = document.getElementById(firstLabelId)
+        if (labelEl && labelEl.textContent.trim()) return labelEl.textContent.trim()
+      }
+    }
+
     const img = gameCell.querySelector("img")
     if (img && img.alt) return img.alt
 
@@ -1061,6 +1123,21 @@ observeFriendsListPanel();
       if (currentGames.length === 0) {
         console.log("[ManualOrder] ⚠️ No games found in grid, skipping synchronization")
         return false
+      }
+
+      // Safety guard: if the DOM suddenly shows far fewer games than what we
+      // have saved (e.g. mid-transition between Store/Community and Library,
+      // or images still loading), do NOT synchronize — this would wrongly
+      // mark real games as "removed" and corrupt savedOrder permanently.
+      // Allow sync only when counts are close, or when we have no saved order yet.
+      if (savedOrder.length > 0) {
+        const dropRatio = (savedOrder.length - currentGames.length) / savedOrder.length
+        if (dropRatio > 0.3) {
+          console.warn(
+            `[ManualOrder] ⚠️ Skipping sync: suspicious game count drop (${currentGames.length} vs ${savedOrder.length} saved) — likely transient DOM state`,
+          )
+          return false
+        }
       }
 
       console.log(`[ManualOrder] 🔄 Synchronizing order: ${currentGames.length} current games, ${savedOrder.length} saved games`)
@@ -1635,84 +1712,64 @@ observeFriendsListPanel();
   // ============================================================================
   // ORDER APPLICATION
   // ============================================================================
-  
+
   /**
-   * Apply saved order to current grid
+   * Apply saved order using CSS `order` property — never moves DOM nodes.
+   *
+   * Steam's grid structure:
+   *   grid[display:grid] > row[display:contents] > gridcell[display:contents] > card[display:block]
+   *
+   * Because row and gridcell both use display:contents, they generate no box —
+   * the card divs are the actual grid items. CSS `order` must be set on the card.
    */
   function applyOrder() {
     if (!currentGrid || savedOrder.length === 0 || !isManualOrderEnabled || isApplyingOrder) {
       return
     }
 
-    // Prevent loops
     isApplyingOrder = true
 
-    // Add visual indicator
-    currentGrid.classList.add("loading")
-
-    const currentGames = getAllGames()
-    const gameMap = new Map()
-    currentGames.forEach((cell) => {
-      const id = getGameId(cell)
-      gameMap.set(id, cell)
-    })
-
-    const fragment = document.createDocumentFragment()
-    let reorderedCount = 0
-
-    // Apply saved order with safe DOM handling
-    savedOrder.forEach((savedGame) => {
-      const gameElement = gameMap.get(savedGame.id)
-      if (gameElement && gameElement.parentNode) {
-        try {
-          // Verify element still exists in DOM
-          if (document.contains(gameElement)) {
-            fragment.appendChild(gameElement)
-            gameMap.delete(savedGame.id)
-            reorderedCount++
-          }
-        } catch (error) {
-          console.warn("[ManualOrder] Error moving game element:", error)
-        }
-      }
-    })
-
-    // Add new games at the end with safe handling
-    gameMap.forEach((element, id) => {
-      if (element && element.parentNode && document.contains(element)) {
-        try {
-          fragment.appendChild(element)
-        } catch (error) {
-          console.warn("[ManualOrder] Error adding new game:", error)
-        }
-      }
-    })
-
-    // Apply changes to DOM with safe handling
     try {
-      if (currentGrid && document.contains(currentGrid)) {
-        currentGrid.appendChild(fragment)
-      }
+      const positionMap = new Map()
+      savedOrder.forEach((game, index) => { positionMap.set(game.id, index) })
+
+      const total = savedOrder.length
+      const currentGames = getAllGames()
+
+      currentGames.forEach((cell) => {
+        const id = getGameId(cell)
+        const pos = positionMap.has(id) ? positionMap.get(id) : total
+
+        // Walk down through display:contents wrappers to find the first box-generating child
+        let target = cell
+        while (target && getComputedStyle(target).display === "contents") {
+          target = target.firstElementChild
+        }
+        if (target) target.style.order = pos
+      })
     } catch (error) {
-      console.error("[ManualOrder] Error applying changes to grid:", error)
+      console.error("[ManualOrder] Error applying CSS order:", error)
     }
 
-    // Remove visual indicator
-    setTimeout(() => {
-      if (currentGrid) {
-        currentGrid.classList.remove("loading")
-      }
-    }, 500)
+    setTimeout(() => { isApplyingOrder = false }, 500)
+  }
 
-    // Only show notification if not from modal
-    if (!modalOpen) {
-      showNotification(`🔄 ${reorderedCount} games reordered`)
+  /**
+   * Remove CSS order overrides (called when manual order is disabled)
+   */
+  function clearOrder() {
+    if (!currentGrid) return
+    try {
+      getAllGames().forEach((cell) => {
+        let target = cell
+        while (target && getComputedStyle(target).display === "contents") {
+          target = target.firstElementChild
+        }
+        if (target) target.style.order = ""
+      })
+    } catch (error) {
+      console.error("[ManualOrder] Error clearing CSS order:", error)
     }
-
-    // Reset flag after delay
-    setTimeout(() => {
-      isApplyingOrder = false
-    }, 1000)
   }
 
   function createModal() {
@@ -1933,73 +1990,100 @@ observeFriendsListPanel();
   }
 
   function setupGridObserver() {
+    // Cancel any previous observer/polling
     if (observer) {
       observer.disconnect()
+      observer = null
+    }
+    if (gridRenderTimeout) {
+      cancelAnimationFrame(gridRenderTimeout)
+      gridRenderTimeout = null
     }
 
-    if (!currentGrid || modalOpen) return
+    if (!isManualOrderEnabled) return
 
-    observer = new MutationObserver((mutations) => {
-      if (!isManualOrderEnabled || modalOpen || isApplyingOrder) {
-        return
-      }
+    // ── RAF polling ───────────────────────────────────────────────────────────
+    // Instead of watching React's DOM mutations (crash risk), we poll at ~500ms
+    // to check if the grid was remounted or if CSS order was wiped by React.
+    // Safe because we only read/write styles between frames, never mid-render.
+    // ─────────────────────────────────────────────────────────────────────────
 
-      let shouldApplyOrder = false
-      let significantChange = false
+    let lastCheck = 0
+    const INTERVAL = 500
 
-      mutations.forEach((mutation) => {
-        if (mutation.type === "childList") {
-          const addedNodes = Array.from(mutation.addedNodes).filter(
-            (node) => node.nodeType === 1 && node.matches && node.matches(GAME_SELECTOR),
-          )
+    function poll(timestamp) {
+      if (!isManualOrderEnabled) return
 
-          const removedNodes = Array.from(mutation.removedNodes).filter(
-            (node) => node.nodeType === 1 && node.matches && node.matches(GAME_SELECTOR),
-          )
+      if (timestamp - lastCheck >= INTERVAL) {
+        lastCheck = timestamp
 
-                // Detectar cambios significativos en los juegos
-      if (addedNodes.length > 3 || removedNodes.length > 3) {
-        significantChange = true
-        console.log(
-          `[ManualOrder] 🔄 Significant games change detected: +${addedNodes.length}, -${removedNodes.length}`,
-        )
-      } else if (addedNodes.length > 0 || removedNodes.length > 0) {
-        shouldApplyOrder = true
-        console.log(`[ManualOrder] 🔄 Minor games change detected: +${addedNodes.length}, -${removedNodes.length}`)
-      }
+        // Re-acquire grid (may have been remounted)
+        const freshGrid = findByClasses(GRID_CLASSES)
 
-      // Check for significant changes in game count
-      if (detectSignificantChanges()) {
-        significantChange = true
-        console.log("[ManualOrder] 🚨 Significant count change detected, forcing sync")
-      }
+        if (!freshGrid) {
+          // Grid gone — keep polling, it may come back
+          gridRenderTimeout = requestAnimationFrame(poll)
+          return
         }
-      })
 
-      // Limpiar timeout anterior
-      if (gridRenderTimeout) {
-        clearTimeout(gridRenderTimeout)
-      }
+        if (freshGrid !== currentGrid) {
+          // Grid was remounted by React — reapply order WITHOUT touching
+          // savedOrder. We never call synchronizeGameOrder() here because
+          // during tab transitions (Store/Community) the grid can briefly
+          // report 0 or malformed games, and synchronizing against that
+          // would corrupt savedOrder in localStorage permanently.
+          currentGrid = freshGrid
+          console.log("[ManualOrder] 🔄 Grid remounted — reapplying order")
+          applyOrder()
+          gridRenderTimeout = requestAnimationFrame(poll)
+          return
+        }
 
-      if (significantChange || shouldApplyOrder) {
-        // Usar timeout más largo para cambios significativos
-        const delay = significantChange ? 800 : 300
+        // Same grid — verify CSS order still matches savedOrder (not just "exists")
+        const games = getAllGames()
+        if (games.length > 0 && savedOrder.length > 0) {
+          const positionMap = new Map()
+          savedOrder.forEach((g, i) => positionMap.set(g.id, i))
 
-        gridRenderTimeout = setTimeout(() => {
-          if (!isApplyingOrder && isManualOrderEnabled) {
-            console.log("[ManualOrder] 🔄 Applying order after grid change...")
-            applyOrderWithSync()
+          let mismatchFound = false
+          for (const cell of games) {
+            const id = getGameId(cell)
+            if (!positionMap.has(id)) continue
+
+            let target = cell
+            while (target && getComputedStyle(target).display === "contents") {
+              target = target.firstElementChild
+            }
+            if (!target) continue
+
+            const expected = String(positionMap.get(id))
+            const actual = target.style.order
+
+            if (actual !== expected) {
+              mismatchFound = true
+              break
+            }
           }
-        }, delay)
+
+          if (mismatchFound) {
+            console.log("[ManualOrder] 🔄 CSS order mismatch detected — reapplying")
+            applyOrder()
+          }
+        }
+
+        // Also restore shelf visibility if it was wiped by React
+        if (localStorage.getItem("steam_hide_shelf") === "true") {
+          document.querySelectorAll("._3SkuN_ykQuWGF94fclHdhJ").forEach((el) => {
+            if (el.style.display !== "none") el.style.display = "none"
+          })
+        }
       }
-    })
 
-    observer.observe(currentGrid, {
-      childList: true,
-      subtree: false,
-    })
+      gridRenderTimeout = requestAnimationFrame(poll)
+    }
 
-    console.log("[ManualOrder] 👀 Grid Observer configured")
+    gridRenderTimeout = requestAnimationFrame(poll)
+    console.log("[ManualOrder] 👀 RAF polling observer started")
   }
 
   function showNotification(message) {
@@ -2043,25 +2127,81 @@ observeFriendsListPanel();
     toggleContainer = document.createElement("div")
     toggleContainer.id = "manual-toggle-container"
     toggleContainer.innerHTML = `
-            <div class="toggle-arrow" id="toggle-arrow">⮜</div>
-            <div class="toggle-options" id="toggle-options">
+        <button id="panel-trigger-btn">
+            ⚙ Library <span class="trigger-caret">▲</span>
+        </button>
+        <div id="panel-dropdown">
+            <div class="panel-row">
+                <span class="panel-row-label" id="manual-order-label">Manual Order</span>
                 <label class="switch">
                     <input type="checkbox" id="manual-order-toggle">
                     <span class="slider"></span>
                 </label>
-                <span>Manual Order</span>
-                <button id="open-reorder-modal" style="display: none;">🎮 Reorder</button>
+            </div>
+            <div class="panel-row" id="reorder-row" style="display:none;">
+                <span class="panel-row-label">Reorder games</span>
+                <button id="open-reorder-modal">🎮 Reorder</button>
+            </div>
+            <div class="panel-divider"></div>
+            <div class="panel-row">
+                <span class="panel-row-label" id="hide-shelf-label">Hide Shelf</span>
+                <label class="switch">
+                    <input type="checkbox" id="hide-shelf-toggle">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="panel-divider"></div>
+            <div class="panel-row">
+                <span class="panel-row-label">Colors</span>
                 <button id="customize-colors-btn">🎨 Colors</button>
             </div>
-        `
+        </div>
+    `
 
     bottomPanel.insertBefore(toggleContainer, bottomPanel.children[1] || null)
 
-    const toggleInput = document.getElementById("manual-order-toggle")
-    const openModalBtn = document.getElementById("open-reorder-modal")
+    const toggleInput    = document.getElementById("manual-order-toggle")
+    const openModalBtn   = document.getElementById("open-reorder-modal")
+    const reorderRow     = document.getElementById("reorder-row")
     const customizeColorsBtn = document.getElementById("customize-colors-btn")
-    const toggleArrow = document.getElementById("toggle-arrow")
-    const toggleOptions = document.getElementById("toggle-options")
+    const triggerBtn     = document.getElementById("panel-trigger-btn")
+    const dropdown       = document.getElementById("panel-dropdown")
+    const hideShelfToggle = document.getElementById("hide-shelf-toggle")
+
+    // ── Dropdown open/close ──
+    triggerBtn.addEventListener("click", (e) => {
+      e.stopPropagation()
+      const isOpen = dropdown.classList.toggle("open")
+      triggerBtn.classList.toggle("active", isOpen)
+    })
+    document.addEventListener("click", (e) => {
+      if (!toggleContainer.contains(e.target)) {
+        dropdown.classList.remove("open")
+        triggerBtn.classList.remove("active")
+      }
+    })
+
+    // ── Hide shelf toggle ──
+    const HIDE_SHELF_KEY = "steam_hide_shelf"
+    const shelfSelector  = "._3SkuN_ykQuWGF94fclHdhJ"
+
+    function applyShelfVisibility(hidden) {
+      document.querySelectorAll(shelfSelector).forEach((el) => {
+        el.style.display = hidden ? "none" : ""
+      })
+    }
+
+    const savedHideShelf = localStorage.getItem(HIDE_SHELF_KEY) === "true"
+    if (savedHideShelf) {
+      hideShelfToggle.checked = true
+      applyShelfVisibility(true)
+    }
+
+    hideShelfToggle.addEventListener("change", (e) => {
+      const hidden = e.target.checked
+      localStorage.setItem(HIDE_SHELF_KEY, hidden)
+      applyShelfVisibility(hidden)
+    })
 
     // Load previous state
     const wasEnabled = loadEnabledState()
@@ -2072,12 +2212,6 @@ observeFriendsListPanel();
         toggleInput.dispatchEvent(new Event("change"))
       }, 100)
     }
-
-    // Toggle arrow functionality
-    toggleArrow.addEventListener("click", () => {
-      toggleOptions.classList.toggle("collapsed")
-      toggleArrow.classList.toggle("collapsed")
-    })
 
     // Customize colors button
     customizeColorsBtn.addEventListener("click", () => {
@@ -2111,12 +2245,6 @@ observeFriendsListPanel();
         }
 
         if (currentGrid) {
-          // NUEVO: Guardar el HTML original antes de hacer cambios
-          if (!originalGridHTML) {
-            originalGridHTML = currentGrid.innerHTML
-            console.log("[ManualOrder] 💾 Original grid HTML saved")
-          }
-
           const games = getAllGames()
           console.log(`[ManualOrder] ✅ Grid found: ${games.length} games`)
           currentGrid.classList.add("manual-order-active")
@@ -2133,7 +2261,7 @@ observeFriendsListPanel();
           }, 500)
 
           setupGridObserver()
-          openModalBtn.style.display = "inline-block"
+          reorderRow.style.display = "flex"
           showNotification("🎮 Manual mode enabled")
         } else {
           console.error("[ManualOrder] ❌ Grid not found")
@@ -2142,11 +2270,8 @@ observeFriendsListPanel();
           saveEnabledState(false)
         }
       } else {
-        // MODIFICADO: Restaurar HTML original al desactivar
-        if (currentGrid && originalGridHTML) {
-          currentGrid.innerHTML = originalGridHTML
-          console.log("[ManualOrder] 🔄 Grid restored to original state")
-        }
+        // Clear CSS order overrides (safe — doesn't touch DOM structure)
+        clearOrder()
 
         if (currentGrid) {
           currentGrid.classList.remove("manual-order-active")
@@ -2154,6 +2279,10 @@ observeFriendsListPanel();
         if (observer) {
           observer.disconnect()
           observer = null
+        }
+        if (gridRenderTimeout) {
+          cancelAnimationFrame(gridRenderTimeout)
+          gridRenderTimeout = null
         }
 
         // Re-enable Steam's sort dropdown
@@ -2164,8 +2293,8 @@ observeFriendsListPanel();
           sortBtn.classList.remove("disabled")
         }
 
-        openModalBtn.style.display = "none"
-        showNotification("📋 Manual mode disabled - Grid restored")
+        reorderRow.style.display = "none"
+        showNotification("📋 Manual mode disabled")
       }
     })
 
@@ -2185,92 +2314,18 @@ observeFriendsListPanel();
 
     // Check initial visibility
     checkAndToggleVisibility()
-
-    // Start with options collapsed by default
-    toggleOptions.classList.add("collapsed")
-    toggleArrow.classList.add("collapsed")
   }
 
   function checkAndToggleVisibility() {
     if (!toggleContainer) return
-
-    const readyToPlayActive = isReadyToPlayActive()
-
-    if (readyToPlayActive) {
-      toggleContainer.style.display = "flex"
-      console.log("[ManualOrder] ✅ Toggle shown - Ready to Play is active")
-    } else {
-      toggleContainer.style.display = "none"
-
-      // Si estaba activado el modo manual, desactivarlo
-      if (isManualOrderEnabled) {
-        const toggleInput = document.getElementById("manual-order-toggle")
-        if (toggleInput) {
-          toggleInput.checked = false
-          toggleInput.dispatchEvent(new Event("change"))
-        }
-      }
-
-      console.log("[ManualOrder] ❌ Toggle hidden - Ready to Play is not active")
-    }
+    // Panel is always visible now — no longer gated behind "Ready to Play" filter.
+    toggleContainer.style.display = "flex"
   }
 
   function setupVisibilityObserver() {
-    if (visibilityObserver) {
-      visibilityObserver.disconnect()
-    }
-
-    // Observer para detectar cambios en el DOM que puedan afectar la visibilidad del toggle
-    visibilityObserver = new MutationObserver((mutations) => {
-      let shouldCheck = false
-
-      mutations.forEach((mutation) => {
-        // Detectar cambios en botones o controles de filtro
-        if (mutation.type === "childList") {
-          const addedNodes = Array.from(mutation.addedNodes)
-          const removedNodes = Array.from(mutation.removedNodes)
-
-          // Verificar si se añadieron/removieron elementos relevantes
-          const relevantChange = [...addedNodes, ...removedNodes].some((node) => {
-            if (node.nodeType !== 1) return false
-            return (
-              node.matches &&
-              (node.matches('[role="button"]') ||
-                (node.querySelector && node.querySelector('[role="button"]')) ||
-                node.classList.contains("SVGIcon_ReadyToPlay") ||
-                (node.querySelector && node.querySelector(".SVGIcon_ReadyToPlay")) ||
-                (node.querySelector && node.querySelector('svg[viewBox="-305.5 396.5 256 256"]')))
-            )
-          })
-
-          if (relevantChange) shouldCheck = true
-        }
-
-        if (mutation.type === "attributes") {
-          const target = mutation.target
-          if (
-            target.matches &&
-            (target.matches('[role="button"]') || target.classList.contains("SVGIcon_ReadyToPlay"))
-          ) {
-            shouldCheck = true
-          }
-        }
-      })
-
-      if (shouldCheck) {
-        // Debounce para evitar múltiples verificaciones
-        setTimeout(checkAndToggleVisibility, 200)
-      }
-    })
-
-    visibilityObserver.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["class", "style", "aria-pressed", "data-active"],
-    })
-
-    console.log("[ManualOrder] 👀 Visibility Observer configured")
+    // No-op: panel visibility no longer depends on DOM state (it's always shown).
+    // Kept as a function for backward compatibility with existing call sites.
+    checkAndToggleVisibility()
   }
 
   function initialize() {
@@ -2550,7 +2605,7 @@ function addColorCustomizationStyles() {
       padding: 4px 8px;
       border-radius: 4px;
       font-size: 12px;
-      width: 100%;
+      width: 90%;
     }
 
     .alpha-slider {
