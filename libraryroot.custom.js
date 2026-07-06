@@ -1774,12 +1774,36 @@ observeFriendsListPanel();
 
   function createModal() {
     const games = getAllGames()
-    const currentOrder = games.map((cell) => ({
-      id: getGameId(cell),
-      title: getGameTitle(cell),
-      image: getGameImage(cell),
-      element: cell,
-    }))
+
+    // Build a map of id → game data from the DOM
+    const domGameMap = new Map()
+    games.forEach((cell) => {
+      const id = getGameId(cell)
+      if (id) {
+        domGameMap.set(id, {
+          id,
+          title: getGameTitle(cell),
+          image: getGameImage(cell),
+          element: cell,
+        })
+      }
+    })
+
+    // Build the modal list in savedOrder order (the actual visual order),
+    // then append any games not in savedOrder at the end.
+    // This is necessary because we use CSS `order` — the DOM order no longer
+    // reflects what the user sees.
+    const orderedGames = []
+    savedOrder.forEach((saved) => {
+      if (domGameMap.has(saved.id)) {
+        orderedGames.push(domGameMap.get(saved.id))
+        domGameMap.delete(saved.id)
+      }
+    })
+    // Remaining games not in savedOrder go at the end
+    domGameMap.forEach((game) => orderedGames.push(game))
+
+    const currentOrder = orderedGames
 
     const overlay = document.createElement("div")
     overlay.id = "reorder-modal-overlay"
