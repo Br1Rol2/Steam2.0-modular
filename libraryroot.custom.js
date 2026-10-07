@@ -2422,7 +2422,7 @@ const DEFAULT_COLORS = {
       { hex: "#09578d", alpha: 1 }
     ],
     angle: 225,
-    selector: "._3Sb2o_mQ30IDRh0C72QUUu"
+    selector: "._2gSXCB6PbOlMxslr8hm6dm"
   },
   headerFooter: {
     name: "Header/Footer",
@@ -2874,6 +2874,10 @@ function loadColorConfig() {
           }
         }
       })
+      // Keep the selector from defaults so saved configs apply the gradient on the shared container (news + games)
+      if (config.gamesBackground) {
+        config.gamesBackground.selector = DEFAULT_COLORS.gamesBackground.selector
+      }
       return { ...DEFAULT_COLORS, ...config }
     } catch (e) {
       console.error("[ColorCustomizer] Error loading config:", e)

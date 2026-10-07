@@ -52,8 +52,28 @@ box-shadow: none;
 }
 
  /* GAMES BACKGROUND */
- ._3Sb2o_mQ30IDRh0C72QUUu {
-    background-image: linear-gradient(225deg, #5a0a37 0%, #19002e 30%, #09578d 100%);
+ ._2gSXCB6PbOlMxslr8hm6dm {
+    background: none;
+    background-image: linear-gradient(225deg, #5a0a37 0%, #19002e 50%, #09578d 100%);
+}
+
+/* Library home + news (Nouveautés) are transparent so the container gradient is continuous behind both */
+._3Sb2o_mQ30IDRh0C72QUUu,
+._17uEBe5Ri8TMsnfELvs8-N,
+._2AUVZlzQq67qe3yhLZsPPB {
+    background: transparent !important;
+    background-image: none !important;
+}
+
+/* LIBRARY GAME PAGE BACKGROUND (AppDetailsTransitionGroup + its scroll container) */
+._2Dd4T78PcCTUVgOtDGFY5j {
+    background: none !important;
+    background-image: linear-gradient(225deg, #5a0a37 0%, #19002e 50%, #09578d 100%) !important;
+}
+
+._3lDczhulqraStjCitLYJ1K {
+    background: transparent !important;
+    background-image: none !important;
 }
 
 /* GAMES SCROLLBAR*/
@@ -71,11 +91,6 @@ box-shadow: none;
 ._3vCzSrrXZzZjVJFZNg9SGu {
     background: none !important;
     background-image: linear-gradient(225deg, #000000 0%, #19002e 50%, #061f30 100%) !important;
-}
-
- /* HIDE NEWSLIST */
-._17uEBe5Ri8TMsnfELvs8-N {
-    display: none !important
 }
 
 ._5wILZhsLODVwGfcJ0hKmJ {
@@ -124,7 +139,12 @@ button.DialogButton, .DesktopUI .title-area-icon:hover, .friendsui-container .ti
 
 /*SEARCHBAR*/
         ._1bGewp3tfzqAF6fVTFFUOz .UkR3sY319PuaUNuUWks2K {
-            background: #00011c;
+            background: none;
+            background-image: linear-gradient(225deg, #000000 0%, #19002e 50%, #061f30 100%);
+            /* continues the header gradient above and the store nav bar below */
+            background-size: 100% 149px;
+            background-position: 0 -66px;
+            background-repeat: no-repeat;
         }
 
 /*Dragg games panel*/
