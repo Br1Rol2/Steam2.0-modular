@@ -1,0 +1,41 @@
+/*Friendlist*/
+.friendlist{
+    background-image: linear-gradient(225deg, #2b0018 0%, #17011d 54%, #010e2d 100%) !important;
+}
+
+.friendListHeaderContainer{
+    background-color: #1c232c8a !important;
+}
+
+.friendlistListContainer {
+    background: radial-gradient(ellipse farthest-corner at 50% 30%, rgb(33 35 41 / 54%) 0%, rgb(30 32 37 / 54%) 50%, rgb(28 29 34 / 54%) 100%);
+}
+
+.friendsListSectionTitle {
+    background-color: #434953f0 !important;
+}
+
+.chatRoomListContainer{
+    background: radial-gradient(ellipse farthest-corner at 20% 30%, rgb(34 43 53 / 54%) 0%, rgb(37 46 56 / 54%) 10%, rgb(32 36 43 / 54%) 100%);
+}
+
+.friendListFooter {
+    background-color: #22252ba8 !important;
+}
+
+.friendsListSectionTitle {
+    background-color: #4349538c !important;
+}
+
+html.client_chat_frame body{
+    background-color: none !important;
+}
+
+.statusHeaderGlow{
+    visibility: hidden !important;
+    background-color: none !important;
+}
+
+.activeTab {
+    background-color: #43495394 !important;
+}

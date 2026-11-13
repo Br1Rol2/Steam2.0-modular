@@ -13,12 +13,19 @@
     "GOG 2.0 Inspired",
     "User-Friendly"
   ],
-    "version": "1.0.4", 
+    "version": "1.0.5", 
     "github": {
         "owner": "Br1Rol2",
         "repo_name": "Steam2.0-modular"
     },
 
   "Steam-WebKit": "webkit.css",
-  "UseDefaultPatches": true
+  "UseDefaultPatches": true,
+  "Patches": [
+    {
+      "MatchRegexString": "Big.?Picture",
+      "TargetCss": "bigpicture.custom.css",
+      "TargetJs": "bigpicture.custom.js"
+    }
+  ]
 }

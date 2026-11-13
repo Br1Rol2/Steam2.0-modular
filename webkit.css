@@ -1,0 +1,23 @@
+/**
+ * @description Styles for the Steam store / web pages (WebKit)
+ */
+
+/* STORE NAV BAR (Parcourir, Recommandations, ... Liste de souhaits) */
+._16jZ3HEbtaJTl80pQINN2Y {
+    background: none !important;
+    background-image: linear-gradient(225deg, #000000 0%, #19002e 50%, #061f30 100%) !important;
+    /* The header above ends at the top of this bar (103px from the window top):
+       size the gradient as the whole header (149px tall) and shift it up so it continues seamlessly */
+    background-size: 100% 149px !important;
+    background-position: 0 -103px !important;
+    background-repeat: no-repeat !important;
+}
+
+/* STORE GAME PAGES: page background uses the same gradient as the library */
+body.game_bg,
+body.game_bg .responsive_page_content {
+    background: none !important;
+    background-color: #19002e !important;
+    background-image: linear-gradient(225deg, #5a0a37 0%, #19002e 50%, #09578d 100%) !important;
+    background-attachment: fixed !important;
+}

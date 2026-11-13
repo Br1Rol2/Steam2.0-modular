@@ -1,0 +1,10 @@
+/**
+ * bigpicture.custom.css — Steam 2.0 Modular
+ * Default Big Picture background: same gradient as the games library, slightly transparent.
+ * Can be regenerated from the Colors modal ("Save BP CSS").
+ */
+
+._3LYP1SIxyoky-yW9Ug_1fq.b084mAvY8rgVMr3H04g9g:is(#GamepadUI_Full_Root, #popup_target *) {
+  background: linear-gradient(225deg,rgba(90,10,55,0.55) 0%,rgba(25,0,46,0.55) 50%,rgba(9,87,141,0.55) 100%) !important;
+  background-image: linear-gradient(225deg,rgba(90,10,55,0.55) 0%,rgba(25,0,46,0.55) 50%,rgba(9,87,141,0.55) 100%) !important;
+}

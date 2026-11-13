@@ -135,6 +135,8 @@ observeFriendsListPanel();
   let observer = null
   let modalOpen = false
   let isApplyingOrder = false
+  let isDraggingGrid = false
+  let gridDragInstalled = false
   let toggleContainer = null
   let visibilityObserver = null
   let gridRenderTimeout = null
@@ -246,7 +248,7 @@ observeFriendsListPanel();
         }
 
         /* ── Reorder button (inside dropdown) ── */
-        #open-reorder-modal {
+        #export-order-btn, #import-order-btn {
             background: linear-gradient(135deg, #4CAF50, #45a049);
             color: white;
             border: none;
@@ -258,9 +260,13 @@ observeFriendsListPanel();
             transition: all 0.2s;
             white-space: nowrap;
         }
-        #open-reorder-modal:hover {
+        #export-order-btn:hover, #import-order-btn:hover {
             background: linear-gradient(135deg, #45a049, #3d8b40);
         }
+
+        .panel-hint { font-size: 11px; color: #8a8a8a; white-space: normal; max-width: 190px; line-height: 1.3; }
+        #reorder-row .panel-btns { display: flex; gap: 6px; }
+        body.grid-dragging, body.grid-dragging * { cursor: grabbing !important; user-select: none !important; }
 
         /* ── Colors button (inside dropdown) ── */
         #customize-colors-btn {
@@ -320,12 +326,10 @@ observeFriendsListPanel();
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0, 0, 0, 0.8);
             z-index: 10000;
             display: flex;
             align-items: center;
             justify-content: center;
-            backdrop-filter: blur(1px);
         }
 
         /* Modal container */
@@ -1723,7 +1727,7 @@ observeFriendsListPanel();
    * the card divs are the actual grid items. CSS `order` must be set on the card.
    */
   function applyOrder() {
-    if (!currentGrid || savedOrder.length === 0 || !isManualOrderEnabled || isApplyingOrder) {
+    if (!currentGrid || savedOrder.length === 0 || !isManualOrderEnabled || isApplyingOrder || isDraggingGrid) {
       return
     }
 
@@ -1772,237 +1776,209 @@ observeFriendsListPanel();
     }
   }
 
-  function createModal() {
-    const games = getAllGames()
+  // ============================================================================
+  // DRAG & DROP DIRECTLY IN THE GRID
+  // ============================================================================
+  // Uses mouse events + CSS `order` only (never moves DOM nodes). While manual
+  // order is ON, Steam's native card drag (used for collections) is cancelled so
+  // the drag is free for reordering.
+  // ============================================================================
 
-    // Build a map of id → game data from the DOM
-    const domGameMap = new Map()
-    games.forEach((cell) => {
+  function getBoxTarget(cell) {
+    let target = cell
+    while (target && getComputedStyle(target).display === "contents") {
+      target = target.firstElementChild
+    }
+    return target
+  }
+
+  function getVisualList() {
+    const list = []
+    getAllGames().forEach((cell) => {
       const id = getGameId(cell)
-      if (id) {
-        domGameMap.set(id, {
-          id,
-          title: getGameTitle(cell),
-          image: getGameImage(cell),
-          element: cell,
-        })
-      }
+      if (!id) return
+      const target = getBoxTarget(cell)
+      if (!target) return
+      const o = parseInt(target.style.order, 10)
+      list.push({ id, title: getGameTitle(cell), target, order: Number.isNaN(o) ? 1e9 : o })
     })
-
-    // Build the modal list in savedOrder order (the actual visual order),
-    // then append any games not in savedOrder at the end.
-    // This is necessary because we use CSS `order` — the DOM order no longer
-    // reflects what the user sees.
-    const orderedGames = []
-    savedOrder.forEach((saved) => {
-      if (domGameMap.has(saved.id)) {
-        orderedGames.push(domGameMap.get(saved.id))
-        domGameMap.delete(saved.id)
-      }
-    })
-    // Remaining games not in savedOrder go at the end
-    domGameMap.forEach((game) => orderedGames.push(game))
-
-    const currentOrder = orderedGames
-
-    const overlay = document.createElement("div")
-    overlay.id = "reorder-modal-overlay"
-
-    const modal = document.createElement("div")
-    modal.id = "reorder-modal"
-
-    const header = document.createElement("div")
-    header.id = "reorder-modal-header"
-    header.innerHTML = `
-            <h2 id="reorder-modal-title">🎮 Reorder Games (${currentOrder.length} games)</h2>
-            <button id="close-modal">×</button>
-        `
-
-    const listContainer = document.createElement("div")
-    listContainer.id = "games-list-container"
-
-    const gamesList = document.createElement("div")
-    gamesList.id = "games-list"
-
-    currentOrder.forEach((game, index) => {
-      const gameItem = document.createElement("div")
-      gameItem.className = "modal-game-item"
-      gameItem.draggable = true
-      gameItem.dataset.gameId = game.id
-      gameItem.dataset.originalIndex = index
-
-      gameItem.innerHTML = `
-                <div class="modal-game-drag-handle">⋮⋮</div>
-                <div class="modal-game-position">${index + 1}</div>
-                <img class="modal-game-image" src="${game.image}" alt="${game.title}" onerror="this.style.display='none'">
-                <div class="modal-game-info">
-                    <div class="modal-game-title">${game.title}</div>
-                    <div class="modal-game-id">ID: ${game.id}</div>
-                </div>
-            `
-
-      gamesList.appendChild(gameItem)
-    })
-
-    listContainer.appendChild(gamesList)
-
-    const footer = document.createElement("div")
-    footer.id = "reorder-modal-footer"
-    footer.innerHTML = `
-            <div>
-                <span style="color: #888; font-size: 12px;">💡 Drag games to reorder</span>
-            </div>
-            <div>
-                <button id="export-order-modal" class="modal-button">📁 Export</button>
-                <button id="import-order-modal" class="modal-button">📂 Import</button>
-                <button id="apply-order" class="modal-button">✅ Apply Order</button>
-                <button id="cancel-reorder" class="modal-button">❌ Cancel</button>
-            </div>
-            <input type="file" id="import-file-input" accept=".json" style="display: none;">
-        `
-
-    modal.appendChild(header)
-    modal.appendChild(listContainer)
-    modal.appendChild(footer)
-    overlay.appendChild(modal)
-
-    setupModalEvents(overlay, gamesList, currentOrder)
-
-    document.body.appendChild(overlay)
-    modalOpen = true
-
-    return { overlay, gamesList, currentOrder }
+    list.sort((a, b) => a.order - b.order)
+    return list
   }
 
-  function setupModalEvents(overlay, gamesList, currentOrder) {
-    let draggedItem = null
-
-    // Close modal
-    overlay.querySelector("#close-modal").addEventListener("click", closeModal)
-    overlay.querySelector("#cancel-reorder").addEventListener("click", closeModal)
-
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) {
-        closeModal()
-      }
-    })
-
-    // Export button in modal
-    overlay.querySelector("#export-order-modal").addEventListener("click", () => {
-      if (savedOrder.length === 0) {
-        showNotification("⚠️ No order to export")
-        return
-      }
-      exportOrder()
-    })
-
-    // Import button in modal
-    overlay.querySelector("#import-order-modal").addEventListener("click", () => {
-      const fileInput = overlay.querySelector("#import-file-input")
-      fileInput.click()
-    })
-
-    // File input handler
-    overlay.querySelector("#import-file-input").addEventListener("change", handleImportFile)
-
-    // Apply order
-    overlay.querySelector("#apply-order").addEventListener("click", () => {
-      const newOrder = Array.from(gamesList.children).map((item, index) => {
-        const gameId = item.dataset.gameId
-        const originalGame = currentOrder.find((g) => g.id === gameId)
-        return {
-          id: gameId,
-          title: originalGame.title,
-        }
-      })
-
-      console.log("[ManualOrder] 📝 Applying new order from modal")
-
-      // Guardar el orden primero
-      saveOrder(newOrder)
-
-      // Cerrar modal primero
-      closeModal()
-
-      // Aplicar orden después de cerrar el modal
-      setTimeout(() => {
-        applyOrderWithSync()
-        showNotification("✅ Order applied successfully!")
-      }, 300)
-    })
-
-    // Drag and drop in modal
-    gamesList.addEventListener("dragstart", (e) => {
-      if (!e.target.classList.contains("modal-game-item")) return
-
-      draggedItem = e.target
-      draggedItem.classList.add("dragging")
-
-      e.dataTransfer.effectAllowed = "move"
-      e.dataTransfer.setData("text/html", draggedItem.outerHTML)
-    })
-
-    gamesList.addEventListener("dragend", (e) => {
-      if (e.target.classList.contains("modal-game-item")) {
-        e.target.classList.remove("dragging")
-        updatePositionNumbers()
-      }
-
-      Array.from(gamesList.children).forEach((item) => {
-        item.classList.remove("drop-target")
-      })
-
-      draggedItem = null
-    })
-
-    gamesList.addEventListener("dragover", (e) => {
-      e.preventDefault()
-
-      const afterElement = getDragAfterElement(gamesList, e.clientY)
-
-      Array.from(gamesList.children).forEach((item) => {
-        item.classList.remove("drop-target")
-      })
-
-      if (afterElement == null) {
-        if (draggedItem) {
-          gamesList.appendChild(draggedItem)
-        }
-      } else {
-        afterElement.classList.add("drop-target")
-        if (draggedItem) {
-          gamesList.insertBefore(draggedItem, afterElement)
-        }
-      }
-    })
+  function getScrollParent(el) {
+    let node = el
+    while (node && node !== document.body) {
+      const oy = getComputedStyle(node).overflowY
+      if ((oy === "auto" || oy === "scroll") && node.scrollHeight > node.clientHeight) return node
+      node = node.parentElement
+    }
+    return null
   }
 
-  function getDragAfterElement(container, y) {
-    const draggableElements = [...container.querySelectorAll(".modal-game-item:not(.dragging)")]
+  function setupGridDrag() {
+    if (gridDragInstalled) return
+    gridDragInstalled = true
 
-    return draggableElements.reduce(
-      (closest, child) => {
-        const box = child.getBoundingClientRect()
-        const offset = y - box.top - box.height / 2
+    let st = null          // drag state
+    let suppressClick = false
 
-        if (offset < 0 && offset > closest.offset) {
-          return { offset: offset, element: child }
-        } else {
-          return closest
-        }
-      },
-      { offset: Number.NEGATIVE_INFINITY },
-    ).element
-  }
-
-  function updatePositionNumbers() {
-    const items = Array.from(document.querySelectorAll(".modal-game-item"))
-    items.forEach((item, index) => {
-      const posElement = item.querySelector(".modal-game-position")
-      if (posElement) {
-        posElement.textContent = index + 1
+    // Cancel Steam's native drag of cards while manual order is on
+    const cancelNative = (e) => {
+      if (!isManualOrderEnabled || !currentGrid) return
+      if (currentGrid.contains(e.target)) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
       }
-    })
+    }
+    window.addEventListener("dragstart", cancelNative, true)
+
+    // While dragging, hide Steam's hover info card: React never sees hover events from the grid
+    const HOVER_EVENTS = ["mouseover", "mouseout", "mouseenter", "mouseleave", "pointerover", "pointerout", "pointerenter", "pointerleave"]
+    const blockHover = (e) => {
+      if (!isDraggingGrid || !currentGrid) return
+      if (e.target instanceof Node && currentGrid.contains(e.target)) e.stopImmediatePropagation()
+    }
+    HOVER_EVENTS.forEach((ev) => window.addEventListener(ev, blockHover, true))
+
+    // Swallow the click that follows a real drag (would open the game page)
+    window.addEventListener("click", (e) => {
+      if (suppressClick) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+      }
+    }, true)
+
+    window.addEventListener("mousedown", (e) => {
+      if (e.button !== 0 || !isManualOrderEnabled || !currentGrid || isDraggingGrid) return
+      if (!currentGrid.contains(e.target)) return
+
+      const list = getVisualList()
+      const item = list.find((it) => it.target.contains(e.target))
+      if (!item) return
+
+      st = {
+        id: item.id,
+        target: item.target,
+        list,
+        startX: e.clientX,
+        startY: e.clientY,
+        x: e.clientX,
+        y: e.clientY,
+        active: false,
+        ghost: null,
+        offX: 0,
+        offY: 0,
+        scroller: getScrollParent(currentGrid),
+        raf: null,
+      }
+    }, true)
+
+    function startDrag() {
+      const rect = st.target.getBoundingClientRect()
+      st.offX = st.startX - rect.left
+      st.offY = st.startY - rect.top
+
+      const ghost = st.target.cloneNode(true)
+      ghost.removeAttribute("id")
+      ghost.style.cssText = `position:fixed;left:0;top:0;width:${rect.width}px;height:${rect.height}px;` +
+        `margin:0;z-index:100000;pointer-events:none;opacity:0.9;transform:scale(1.06);` +
+        `box-shadow:0 10px 28px rgba(0,0,0,0.55);border-radius:4px;order:0;`
+      document.body.appendChild(ghost)
+      st.ghost = ghost
+
+      // Tell Steam the pointer left the card so any open hover preview closes (before hover events get blocked)
+      const leave = { bubbles: true, cancelable: true, relatedTarget: document.body, view: window }
+      st.target.dispatchEvent(new PointerEvent("pointerout", leave))
+      st.target.dispatchEvent(new MouseEvent("mouseout", leave))
+
+      st.target.style.opacity = "0"
+      document.body.classList.add("grid-dragging")
+      isDraggingGrid = true
+      st.active = true
+      loop()
+    }
+
+    function moveGhost() {
+      st.ghost.style.left = `${st.x - st.offX}px`
+      st.ghost.style.top = `${st.y - st.offY}px`
+    }
+
+    function loop() {
+      if (!st || !st.active) return
+      moveGhost()
+
+      // Auto-scroll near the top/bottom edge of the scroll area
+      if (st.scroller) {
+        const r = st.scroller.getBoundingClientRect()
+        const EDGE = 70
+        if (st.y < r.top + EDGE) st.scroller.scrollTop -= Math.ceil((r.top + EDGE - st.y) / 4)
+        else if (st.y > r.bottom - EDGE) st.scroller.scrollTop += Math.ceil((st.y - (r.bottom - EDGE)) / 4)
+      }
+
+      // Which card is under the pointer?
+      const fromIdx = st.list.findIndex((it) => it.id === st.id)
+      let toIdx = -1
+      for (let i = 0; i < st.list.length; i++) {
+        if (i === fromIdx) continue
+        const r = st.list[i].target.getBoundingClientRect()
+        if (st.x >= r.left && st.x <= r.right && st.y >= r.top && st.y <= r.bottom) { toIdx = i; break }
+      }
+      if (toIdx !== -1 && fromIdx !== -1 && toIdx !== fromIdx) {
+        const [moved] = st.list.splice(fromIdx, 1)
+        st.list.splice(toIdx, 0, moved)
+        st.list.forEach((it, i) => { it.target.style.order = i })
+      }
+
+      st.raf = requestAnimationFrame(loop)
+    }
+
+    window.addEventListener("mousemove", (e) => {
+      if (!st) return
+      st.x = e.clientX
+      st.y = e.clientY
+      if (!st.active) {
+        if (Math.hypot(st.x - st.startX, st.y - st.startY) < 6) return
+        startDrag()
+      }
+    }, true)
+
+    function endDrag(commit) {
+      if (!st) return
+      const s = st
+      st = null
+      if (!s.active) return
+
+      cancelAnimationFrame(s.raf)
+      s.ghost.remove()
+      s.target.style.opacity = ""
+      document.body.classList.remove("grid-dragging")
+      suppressClick = true
+      setTimeout(() => { suppressClick = false }, 80)
+
+      if (commit) {
+        // Refill the slots that visible games occupy in savedOrder, keeping hidden/filtered ones in place
+        const newSeq = s.list
+        const visibleIds = new Set(newSeq.map((it) => it.id))
+        const merged = savedOrder.slice()
+        const known = new Set(merged.map((g) => g.id))
+        newSeq.forEach((it) => { if (!known.has(it.id)) merged.push({ id: it.id, title: it.title }) })
+        const slots = []
+        merged.forEach((g, i) => { if (visibleIds.has(g.id)) slots.push(i) })
+        newSeq.forEach((it, k) => { merged[slots[k]] = { id: it.id, title: it.title } })
+
+        saveOrder(merged)
+        showNotification("✅ Order saved")
+      }
+
+      isDraggingGrid = false
+      isApplyingOrder = false
+      applyOrder()
+    }
+
+    window.addEventListener("mouseup", (e) => { if (e.button === 0) endDrag(true) }, true)
+    window.addEventListener("blur", () => endDrag(false))
+    window.addEventListener("keydown", (e) => { if (e.key === "Escape" && st && st.active) endDrag(false) }, true)
   }
 
   function closeModal() {
@@ -2038,7 +2014,7 @@ observeFriendsListPanel();
     function poll(timestamp) {
       if (!isManualOrderEnabled) return
 
-      if (timestamp - lastCheck >= INTERVAL) {
+      if (!isDraggingGrid && timestamp - lastCheck >= INTERVAL) {
         lastCheck = timestamp
 
         // Re-acquire grid (may have been remounted)
@@ -2163,14 +2139,28 @@ observeFriendsListPanel();
                 </label>
             </div>
             <div class="panel-row" id="reorder-row" style="display:none;">
-                <span class="panel-row-label">Reorder games</span>
-                <button id="open-reorder-modal">🎮 Reorder</button>
+                <span class="panel-row-label panel-hint">Drag the cards in the grid to reorder</span>
+            </div>
+            <div class="panel-row" id="backup-row" style="display:none;">
+                <span class="panel-row-label">Order backup</span>
+                <div class="panel-btns" style="display:flex;gap:6px;">
+                    <button id="export-order-btn">📁 Export</button>
+                    <button id="import-order-btn">📂 Import</button>
+                </div>
+                <input type="file" id="import-file-input" accept=".json" style="display:none;">
             </div>
             <div class="panel-divider"></div>
             <div class="panel-row">
                 <span class="panel-row-label" id="hide-shelf-label">Hide Shelf</span>
                 <label class="switch">
                     <input type="checkbox" id="hide-shelf-toggle">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="panel-row">
+                <span class="panel-row-label" id="hide-news-label">Hide News</span>
+                <label class="switch">
+                    <input type="checkbox" id="hide-news-toggle">
                     <span class="slider"></span>
                 </label>
             </div>
@@ -2185,7 +2175,7 @@ observeFriendsListPanel();
     bottomPanel.insertBefore(toggleContainer, bottomPanel.children[1] || null)
 
     const toggleInput    = document.getElementById("manual-order-toggle")
-    const openModalBtn   = document.getElementById("open-reorder-modal")
+    const backupRow      = document.getElementById("backup-row")
     const reorderRow     = document.getElementById("reorder-row")
     const customizeColorsBtn = document.getElementById("customize-colors-btn")
     const triggerBtn     = document.getElementById("panel-trigger-btn")
@@ -2225,6 +2215,28 @@ observeFriendsListPanel();
       const hidden = e.target.checked
       localStorage.setItem(HIDE_SHELF_KEY, hidden)
       applyShelfVisibility(hidden)
+    })
+
+    // ── Hide news (What's New) toggle ──
+    // Uses an injected <style> so React re-renders can't undo it. Hidden by default (theme's original look).
+    const HIDE_NEWS_KEY = "steam_hide_news"
+    const hideNewsToggle = document.getElementById("hide-news-toggle")
+    function applyNewsVisibility(hidden) {
+      let st = document.getElementById("hide-news-style")
+      if (!st) {
+        st = document.createElement("style")
+        st.id = "hide-news-style"
+        document.head.appendChild(st)
+      }
+      st.textContent = hidden ? "._17uEBe5Ri8TMsnfELvs8-N{display:none!important}" : ""
+    }
+    const storedNews = localStorage.getItem(HIDE_NEWS_KEY)
+    const newsHidden = storedNews === null ? true : storedNews === "true"
+    hideNewsToggle.checked = newsHidden
+    applyNewsVisibility(newsHidden)
+    hideNewsToggle.addEventListener("change", (e) => {
+      localStorage.setItem(HIDE_NEWS_KEY, e.target.checked)
+      applyNewsVisibility(e.target.checked)
     })
 
     // Load previous state
@@ -2286,7 +2298,8 @@ observeFriendsListPanel();
 
           setupGridObserver()
           reorderRow.style.display = "flex"
-          showNotification("🎮 Manual mode enabled")
+          backupRow.style.display = "flex"
+          showNotification("🎮 Manual mode enabled — drag the cards to reorder")
         } else {
           console.error("[ManualOrder] ❌ Grid not found")
           toggleInput.checked = false
@@ -2318,23 +2331,25 @@ observeFriendsListPanel();
         }
 
         reorderRow.style.display = "none"
+        backupRow.style.display = "none"
         showNotification("📋 Manual mode disabled")
       }
     })
 
-    openModalBtn.addEventListener("click", () => {
-      if (!isManualOrderEnabled) {
-        showNotification("⚠️ Enable manual mode first")
-        return
-      }
-
-      if (modalOpen) {
-        showNotification("⚠️ Modal is already open")
-        return
-      }
-
-      createModal()
+    // ── Export / Import (backup of the order) ──
+    document.getElementById("export-order-btn").addEventListener("click", () => {
+      if (savedOrder.length === 0) { showNotification("⚠️ No order to export"); return }
+      exportOrder()
     })
+    document.getElementById("import-order-btn").addEventListener("click", () => {
+      document.getElementById("import-file-input").click()
+    })
+    document.getElementById("import-file-input").addEventListener("change", (e) => {
+      handleImportFile(e)
+      e.target.value = ""
+    })
+
+    setupGridDrag()
 
     // Check initial visibility
     checkAndToggleVisibility()
@@ -2412,6 +2427,8 @@ const DEFAULT_COLORS = {
       { hex: "#012a46", alpha: 1 }
     ],
     angle: 270,
+    animation: "none",
+    speed: 4,
     selector: "._3x1HklzyDs4TEjACrRO2tB"
   },
   gamesBackground: {
@@ -2422,7 +2439,33 @@ const DEFAULT_COLORS = {
       { hex: "#09578d", alpha: 1 }
     ],
     angle: 225,
-    selector: "._3Sb2o_mQ30IDRh0C72QUUu"
+    animation: "none",
+    speed: 4,
+    selector: "div:has(> ._3Sb2o_mQ30IDRh0C72QUUu)"
+  },
+    FriendList: {
+    name: "Friend List",
+    colors: [
+      { hex: "#5a0a37", alpha: 1 },
+      { hex: "#19002e", alpha: 1 },
+      { hex: "#09578d", alpha: 1 }
+    ],
+    angle: 225,
+    animation: "none",
+    speed: 4,
+    selector: ".friendlist"
+  },
+  BigPicture: {
+    name: "Big Picture",
+    colors: [
+      { hex: "#5a0a37", alpha: 0.35 },
+      { hex: "#19002e", alpha: 0.35 },
+      { hex: "#09578d", alpha: 0.35 }
+    ],
+    angle: 225,
+    animation: "none",
+    speed: 4,
+    selector: "._3LYP1SIxyoky-yW9Ug_1fq.b084mAvY8rgVMr3H04g9g:is(#GamepadUI_Full_Root, #popup_target *)"
   },
   headerFooter: {
     name: "Header/Footer",
@@ -2432,6 +2475,8 @@ const DEFAULT_COLORS = {
       { hex: "#061f30", alpha: 1 }
     ],
     angle: 225,
+    animation: "none",
+    speed: 4,
     selector: "._3Z7VQ1IMk4E3HsHvrkLNgo, ._3vCzSrrXZzZjVJFZNg9SGu"
   },
   propertiesBackground: {
@@ -2441,6 +2486,8 @@ const DEFAULT_COLORS = {
       { hex: "#011d46", alpha: 1 }
     ],
     angle: 270,
+    animation: "none",
+    speed: 4,
     selector: "._30-E9De2BTSA_LQAluUDUI, ._2kwFFHckg8jvnwJfg9-la8, .xSTLmzylFJdIfak7ZdhuA, .DesktopUI .CFTLX2wIKOK3hNV-fS7_V, "
   },
   downloadsBackground: {
@@ -2450,6 +2497,8 @@ const DEFAULT_COLORS = {
       { hex: "#00245e", alpha: 1 }
     ],
     angle: 225,
+    animation: "none",
+    speed: 4,
     selector: "._1l0LmmqDUXH19SjfELddn7"
   },
   Dropdowns: { 
@@ -2459,6 +2508,8 @@ const DEFAULT_COLORS = {
       { hex: "#056dad", alpha: 0.8 }
     ],
     angle: 114,
+    animation: "none",
+    speed: 4,
     selector: "button.DialogButton, ._1l0LmmqDUXH19SjfELddn7, .DesktopUI .title-area-icon:hover, .friendsui-container .title-area-icon:hover, .DesktopUI .PP7LM0Ow1K5qkR8WElLpt, ._3qIuY9S_vXm3IQS-uE9SRS .PP7LM0Ow1K5qkR8WElLpt, ._1ABCOz8DSrl-YJdh1xD-m0, ._1ABCOz8DSrl-YJdh1xD-m0._1dDpSuaJBGZzS41s0SPk4c, span._3nqxIgL0a0DbPZHRZRzWsp, .HijmccPB1BKyhOwhX1EVl._3-_jME_xsuvgT3Dvq4bw_q._3hmGW9wIxNIoPPu1aS7rFm, .HijmccPB1BKyhOwhX1EVl._3-_jME_xsuvgT3Dvq4bw_q._3hmGW9wIxNIoPPu1aS7rFm:hover, .HijmccPB1BKyhOwhX1EVl:not(._3-_jME_xsuvgT3Dvq4bw_q) + .HijmccPB1BKyhOwhX1EVl:not(._3-_jME_xsuvgT3Dvq4bw_q)::before, ._1-vlriAtKYDViAEunue4VO._2DpXjzK3WWsOtUWUrcuOG7, ._1Hye7o1wYIfc9TE9QKRW4T, ._3LLH_F43MTu6UtG4Z3kudv, .eKmEXJCm_lgme24Fp_HWt._2HFrmMgB38Ike5w4rVxzEX.gpfocus, .eKmEXJCm_lgme24Fp_HWt._2HFrmMgB38Ike5w4rVxzEX.gpfocuswithin, .eKmEXJCm_lgme24Fp_HWt._2HuzvKQ2QMUJ-JJOeApaF1:not(.aIeh3X5T2M074RLW1qn6_):hover, ._2mL2HfT5AkDXRi1YBnRWKa:focus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .lat0M-V5X4uYd6Mpm1DJ1 ._9Ig1o0jVRia2uf_FKR3rs, .lat0M-V5X4uYd6Mpm1DJ1 ._2Z68vjdOnUDA2ULQG41JVV, .lat0M-V5X4uYd6Mpm1DJ1 ._25eT23F0cV5lmT3tXAIA56, ._464mFQmvIW2e9TQypXX7W ._2ltn2BK4fnrPEGzNwxx6bx button.DialogButton:enabled:active.gpfocus, ._3qYm9oxf8MdyvQDJgbfCrF ._10OzYaCdn7cgVMec9ozEJG.GamepadMode, .GamepadMode ._3qYm9oxf8MdyvQDJgbfCrF ._10OzYaCdn7cgVMec9ozEJG, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, ._3RPaPwdCZoCW6eX8k9QyRj ._2Uf-0Z6C7U0MMzWK80PYzJ.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, ._2XZq-_f6npaQdAgeRzKIkz.Yd-DsWkYiFiYwpci--Yk_.GamepadMode.gpfocus, .GamepadMode ._2XZq-_f6npaQdAgeRzKIkz.Yd-DsWkYiFiYwpci--Yk_.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .FriendVoiceChat.gpfocus, .GroupVoiceChatFriend.gpfocus, .chatWindow .chatEntry.GamepadMode.gpfocuswithin > :not(.chatUploadContainer), .GamepadMode .chatWindow .chatEntry.gpfocuswithin > :not(.chatUploadContainer), .FriendsListAndChatsSteamDeck .FriendsDataOutofDate div, .GamepadMode .FriendPicker_Suggestions.gpfocus, .GamepadMode .DialogSpanningTable td.friendCell .friend.gpfocus, .friendGroup .groupName.gpfocus, .FriendsListContent.gpfocus .friendlistListContainer, .friendsContainer.gpfocus, .msg div.ChatMessageOpenGraph.gpfocus, .msg div.SteamPublishedFile.gpfocus, .ChatMessageInvite.gpfocus, .inviteLinkContainer .DialogDropDown._DialogInputContainer:hover, .msg.gpfocus, .FriendPicker .FriendPickerFriendList.GamepadMode.gpfocus, .GamepadMode .FriendPicker .FriendPickerFriendList.gpfocus, .rolePriorityButton, .rolePriorityButton.Disabled:active, .rolePriorityButton.Disabled:hover, .rolePriorityButton.Disabled, ._3TvBVwaH8eIBabTdki35oe .QAVElkR0V7KPXLjPVsvl-:focus, ._3rsQRA6-lR_jrdiuv3ARnf .tNl7CupYn5jcZaRWX6PU0._1DMzCviYCYOj6lKga1y_vt, ._1xfC8oO6JVNnioU1NPTN9s, ._1LWDAthWNhS7CyjQqjbeoS.YgnZYhUBZBiUJwuMUvxYw.gpfocus, ._1LWDAthWNhS7CyjQqjbeoS.YgnZYhUBZBiUJwuMUvxYw.gpfocuswithin, ._1LWDAthWNhS7CyjQqjbeoS._15S9pg9Y-g9PGES94IuSQA:not(.hBJA7sc7szpcoeOdRRfsP):hover, ._17CvBVp1rwECBn2FRb4oMA:hover, ._17CvBVp1rwECBn2FRb4oMA._1Rmvuh4adSSWxOVlDHISQO, ._3glxw5rYlV6DTRgH3dHWPD:focus, ._17SQWViInfB-hmYYLoK4Yw:hover, ._17SQWViInfB-hmYYLoK4Yw:active, ._1TR3CCCdSmI-0MXucYBuP2 ._6Z2AOU-R-8aK7KZevey0W, .BasicUI ._170Npw5h84elypMSQ8zNDI ._1ennWu_xj2YF8FRYgJ2M2H ._1axoiZsC1RBp22JQmxiBIc.gpfocuswithin, ._1xPZwgYI7sXtyFt2n8ZjtP, ._1ZpBQtDqcKBbfIIv01Vs1R > div.DesktopUI, .DesktopUI ._1ZpBQtDqcKBbfIIv01Vs1R > div, ._1-nHjRywUoX7Mpyc6JOPaQ, ._2IEorvaTnkOBZw3PEDXZoB, ._12aBP1DmpEKuMxfFuCMbiN:focus, ._12aBP1DmpEKuMxfFuCMbiN:hover, ._3VQeLk37GAZSmurTc4HPP6, ._3Lz1Rs6a2Lc6Mx3J86VKKE, ._2n6FNLKyb6al_YPk13xS7S ._2qURXDJ4ZtfSVOesDk7A73 .DialogCheckbox, .BasicUI ._2n6FNLKyb6al_YPk13xS7S ._2RCSUgg2X_uF_C0e1lrcqc:focus, ._1WKUOT3FdB9-48MMP0Tz9l, ._1kyPoKPv8_QS8nK7zedHW ._3ggB6QN4NkLZyOYn8xj5N7._16L8gDKLHwbnMVEmoFCK9, ._28eIRmQ229ntDIyQXTn3Ub, ._28eIRmQ229ntDIyQXTn3Ub.QE3sHW9puNTAjiRDY71Xy, ._29AJUo6aKT93gX24N5WFj_, .xgdATZWePJFXYrEbin8y9 ._10hh85J75faHJ8ChhjlzLl, ._13LoHE22iGo7eWHNFp5f9L, ._3xXvCbPSIbZttSKUFZbFe-, ._1JVxK7k1dVGT-XnDTUFrIC, ._3WR6QIYfn7Vo3gVdKjjFuW, ._3WR6QIYfn7Vo3gVdKjjFuW ._2rMgXYkzAhJXWsyI9YRY11, ._35iX6Ylrzw0fN8AHhcIlGF, .y7Rs2hclga_Ij4MsMiMdx ._10RZezvQlWdLLbkgRIS9_4, ._6em9hiNtkrdaHE8eVfq0P ._365PZ8BVgd7sz6-xR9E9yb .rYp_PTAXV9D7Jc5c756Re, ._2YoYTMvXU6ZiyEtsi0W2Lo, ._1rhLTraGkRDOPJslCL3i9C:hover, ._1rhLTraGkRDOPJslCL3i9C._2_K-vDkSsSw6FxrfZL-ScT, .u04UCICvObTJ4FUr9RQen, ._1lcizT_Nbxsk484XzTtcFf, ._2JvQPEForHWVgljtxxAwRP, ._22fHb5-teK8S1sxdxVu9yz.gpfocus, ._3LzXZkJi8bsPoHzXEDbLER.gpfocus, .snegceTtDFk1Ok-EUE8fd.gpfocus, .HYloJyr41RFbSFoc8RY3w.gpfocus, ._3Rk61GMptJMR1oaiUCjLyL, ._5j8Im-8lAIRRboL2_jZbQ ._26uPMBCPxQYJ8EBcqiNu8P.gpfocus, ._2IWpfqj8UL5hUs7n-pxnUy ._3sqYFYR9Cl3T6Iy-0a3EJ2:hover, ._3jYltbvkgQtLaooGJYcjJY ._2CKq4dAZDTlb7svd2NHxi6:hover, ._1BwVZqfM73ZtBVsNs3ZcMD, .LclHwcOfHFpwObYMD1HLa ._3H2GezG50hog8gSDj-qbx1 ._3EWVuoln1WAvpEaPNfpift, .LclHwcOfHFpwObYMD1HLa ._3H2GezG50hog8gSDj-qbx1 ._1d8CbcBnA6t3lsxYdnMv1h, .q5OA-x6LcVkvtLCGp-8JC .DialogBody .DialogBodyText .isIfZv25e7VAf6QG7PMrF .YvsXGGpc_ep7jT-hmQxZe, ._2TAQYpbxatDYN3Ex76KX5u .DialogBody .DialogBodyText ._7jaC6UFFrvcKq2UlJr1Pb .Cw--cBWy7v1Ey1JF0VkBN, ._24O5i9aa5PKJmbP0tL_Jbf, .BasicUI button.DialogButton._3Cdin80d-hVsakHUZboheb._3nJyYxGQ3kdwwabPmxNnMe:not(.gpfocus), ._1GdR5LbENV7LOGROJBxohI._1GdR5LbENV7LOGROJBxohI.DialogButton:enabled, ._21P7c4MWmsU2QSZeL-uyZo.gpfocus:not(._74yh4KBx-CqtDEw0dDxpH) ._1VNuYHM6BPBOJspC6zPf5r.IbePLaw-vSvhG1GTenYFg, ._1VNuYHM6BPBOJspC6zPf5r:hover, ._1VNuYHM6BPBOJspC6zPf5r._3-SbBb63lDnu6LzKV-q3Cg, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi:enabled, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi:active, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi:hover, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi:enabled:active:hover, ._1VNuYHM6BPBOJspC6zPf5r ._3oavRVhIS9tC3vBsFT4Ggi.DialogButton:enabled, ._1SyggnJY6qbRSmbZpkK3-H ._1vMU1vG5ZtLihr3mfXUymR, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC:enabled, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC:active, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC:hover, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC:enabled:active:hover, ._3Tfp8-wTAttW3WVa_X9JVC._3Tfp8-wTAttW3WVa_X9JVC.DialogButton:enabled, ._3v2Gg_GCpLHpHQDLFQ7cvI ._3f3VJUtyLXUf_JDFE-BaQ6, ._17M8gvakqjyaw_cLo6ntdl input[type='search']::-webkit-search-cancel-button:hover, .mbFSnoK85dUXHz9VT-YNI._3KGi6ig3JCLHZP-dOsO-Wx, .BasicUI ._1hFrV3_0BponiGRcGE_jg3:hover, .BasicUI ._1hFrV3_0BponiGRcGE_jg3.gpfocus, ._5HZT7qE6px0VNOBQ7q6Nz.gpfocus, ._1X-O1ANz_xeB1j0CZRNFeA.gpfocus, .jD4XY_gqDiLlX0jZqK1MA._1X5wHQgKhsyFOBfnka56DP:hover, ._3mo3QwkH85jTeM4Heu7fjF, ._1-8YObrVay-md19IJJ5mDK, ._3Ak7cNRtzpDWtFgnn6n0-J._1X5wHQgKhsyFOBfnka56DP, .BasicUI ._2yhmcyeUOyM8lt__Skbk9O:hover, .BasicUI ._2yhmcyeUOyM8lt__Skbk9O.gpfocus, ._3-H47wPl1Ng3lh7xGZOPIg.gpfocus, ._3V6804k2yutEiF6IWg8axH.gpfocus, ._1GcAugE5c4nbBUwrA4_xwS._1YAQHDHv4hsPaauccvAFtn:hover, ._2Mo87NUHyjLkjvKcPQxPRu, .j9jQA6QaLJ23lyfuo9nY6, ._1xvIUtLkTrdEk2Ob1MqFcQ._1YAQHDHv4hsPaauccvAFtn, .BasicUI ._30fVm4Rsel-4nUKEiPJgz9:hover, .BasicUI ._30fVm4Rsel-4nUKEiPJgz9.gpfocus, ._2h6KD6p6y4vIgO2Toxx-_K.gpfocus, ._3oKFhPrh1lbp-WtA72Q2Yi.gpfocus, ._3B8wRA4H7e_oSksYNqpSPv._1B1XTNsfuwOaDPAkkr8M42:hover, ._25gii5r23MmAqXvLZj24tK, ._3k90ug209sE23xAMqcM74s, .QFW0BtI4l77AFmv1xLAkx._1B1XTNsfuwOaDPAkkr8M42, .BasicUI ._1lqXpJpRlYvyM2fBx6beHd:hover, .BasicUI ._1lqXpJpRlYvyM2fBx6beHd.gpfocus, ._1k275cE1gk-jpZE5r-37zl.gpfocus, ._4egmnB1wTrDll5Mc_eal8.gpfocus, ._2uW9K6fqc6jZX1XBjnLjw._2kLHZTRgRl0POZfXPcfxks:hover, ._3BvcYKoq-n7GgNwbfFgRAc, .alS2LW_qAwNkYk_GPUC_3, .d9RJTj9G8qU-U9-he2cQx._2kLHZTRgRl0POZfXPcfxks, ._34o03-8cUc3fQX1u650c0L:hover, ._34o03-8cUc3fQX1u650c0L._3fVa8M_7D9Vjz28uYnahhd, ._1X1hrBwjvWglwgv2oIo0zr.gpfocus, .BasicUI ._3x31AgESSlUqX3D4MTHv2m ._37e7DrDNmf1FmsMGA5y0A0 .bACIuqv-b_9TztCczFK19, .BasicUI ._3x31AgESSlUqX3D4MTHv2m ._37e7DrDNmf1FmsMGA5y0A0 ._2JSyABqFEh-v_dwaTnBydR, ._1FFkde8_JKdSiYljLbk0VB, .IIJeieZ-ZPRfIULY7uSDG ._3sfpA6uM8IJuAnrtDiJLZI, .IIJeieZ-ZPRfIULY7uSDG._1wl1mQLRXzpgY5WzEEtDm-, .BasicUI .DY4_wSF8h9T5o46hO5I9V, ._24vXJlAPvB3xAMn1D5WTgv ._1IQVrsAU8HHouq76rRhpXd ._3F9kiZx6X3Y2HCzhNVkjFa, .RoCqXTBUjVBZOysLAWHge, .tGJeFkznK3-BCMgr4GSHi, ._3BBZaNYxbeYSzoc8Wpat0J ._1FZA8-MmuWlfuoH3U91x8K, ._2es8aTNMKhUJ5MqFJJ5zf5, ._3Mp8R2wnoCl6ko0HAX8IHE.Yk-I2az42lZgbInNlu06r, ._3euSFGmYfTklNAvMisNvU6, .KTKZNhGr2va8c2tqKUcHH, ._1sc-BFvGe6huemAE5yVozQ ._2qrpvdd7QiVVxRK8LdZuvx, ._1sc-BFvGe6huemAE5yVozQ ._1gtKGJKNF7LePYMj1G0thY, ._1sc-BFvGe6huemAE5yVozQ ._322VIQXfS-i4Kb7g2Wvsuq, ._2OnwIagz5iEd5wOk6Z9FVJ ._2VCd-2F_zasXcshwdbxHXo, ._4EsG0NitcQDODEeBXMNS4 ._3EvK-5qJkdnPTL_z1RyA7L ._2HnZmed-mYPVaa9i4A47lH ._1horSsSDOLDUtXLkFoSENc, ._3m3_xgqnTKICMikWOA-NtG.F_Vy1zVQmtHYlKsWndE4-.gpfocus, ._3m3_xgqnTKICMikWOA-NtG.F_Vy1zVQmtHYlKsWndE4-.gpfocuswithin, ._3m3_xgqnTKICMikWOA-NtG._2Cj1ImCIbczkbVLC69rJjP:not(._6Dt9tb8Pk5r78_GplsFr6):hover, ._30Cfa_RtfCcvNNH7_LcUON:hover, ._30Cfa_RtfCcvNNH7_LcUON._3enyx9xVrxt-dv1UENf-XP, .KFjZFORv00KdmaEwjssuh:focus, .AuRiJ2ecnP5NI_lXJYN5J, ._2bOpQtX5QAuQxfGhEJ_iYg > span, ._2bOpQtX5QAuQxfGhEJ_iYg > img._1x3UOXJkizqKhkssRfFjSS, .DesktopUI .Oo5JPcEk_erKEYAzYp2nY, ._289eXlJMAn_UUlRH5kHaju, .N8aJrSpxQ6II4CY_aFdYI.QTJZotuAt67vK7Sa2Wjus, ._3AjoLnMNKxYmNTGTJCLfgs._1aml4h4CSJbtrNbX4brUYs, .fi6UDkxJq66MLo2z9wabQ ._2uM3ouyTdzAtXR3ffa7oRg ._2LJMRr1_5XUK4wlt7YMyPi .mh8m9p4PBg_Qrev1bfTzc:hover, ._3OzkVrQFFPv0aV41N4MrHV .fbu3l7kPiBeb3EKCjIb8n ._3ZLaTxSHxeGcoKlIy_-Z0L:hover, ._27m9Qbg4ShilOgwvYZWV8l ._1vG-vFfwpDeNStVbyo1Qy6 ._2wBK7MqJSrj6QCxf3357yL, ._27m9Qbg4ShilOgwvYZWV8l ._1vG-vFfwpDeNStVbyo1Qy6 ._2fYjCJSwdJxdjbi7ysISdL ._2NLwfYHr9KUJZ7LD9nkyva:hover, ._27m9Qbg4ShilOgwvYZWV8l ._1vG-vFfwpDeNStVbyo1Qy6 ._1zaACxBAyMqq2MspuISjix .nzZlhFJAzKTdsKCWil0F9:hover, ._2RAT2vf55Z8zHPpqSHkaW6 .pLUgQmqhYXuq7QbCIVo-5, ._3pofGqV0buiKAfMPEs3_82, ._7AlhCx3XGzBeIrQaCneUD.Eq8Px4ixn5sAFSR6_9wWQ, ._5wILZhsLODVwGfcJ0hKmJ:hover, .MCa4RMSvWJwwWjcZP2wTT ._1oERP7bVictkby2hP4BBva, .RtSv39ZoBOySnb8XQ5hJf._9YK5IY219Pm_F53DAxyYp:not(._1QQWjaXmb1eTHZpeIhQA_5):hover, .RtSv39ZoBOySnb8XQ5hJf._3qhGkQ5qLVNQQ-J2-uPoHt:not(._1QQWjaXmb1eTHZpeIhQA_5):hover, .Utdt7JrpIm5JlpQmqyj1v:hover, ._3lRfTo8Wo3phXfE1DvK6QW:hover, ._3LKQ3S_yqrebeNLF6aeiog:hover, ._13vrqU6oOqmmxrsZSW5O39:hover, ._3arz-hc3FJ0QKXLPRUSaah:hover, ._3zfQA8bEKpisPtsyT4SovP:hover, .zhaKeChn9HPNSMtk0ami_ ._3m0MnUo45wjLOfNLpZ-3KH, ._2rxrVvbku0AC8Qbequ4-z9 ._2SvsKGOQeIoV8laKj5Ql5s ._2YSm1vJtLeKb9BbihsLY1F ._2_4_nZy-T2C3pHa81tGH76 ._3mCrTKGesl-jD-k-buQ13_, ._2rxrVvbku0AC8Qbequ4-z9 ._2SvsKGOQeIoV8laKj5Ql5s ._2YSm1vJtLeKb9BbihsLY1F ._2_4_nZy-T2C3pHa81tGH76 ._1XAm7DWwrTa6XnYYJ5kxAK, ._2rxrVvbku0AC8Qbequ4-z9 ._2SvsKGOQeIoV8laKj5Ql5s ._2YSm1vJtLeKb9BbihsLY1F ._2_4_nZy-T2C3pHa81tGH76 ._2cIK-w-zexbpzoh8jWH-tn, ._20evaxvMeG8jMJ31t-5-L5, ._2a6rfV8TIW2Ngf6EKk-vd ._3ZJ6gL7WvTh8sUOWVhLqe1, .DesktopUI ._2Sj4-UDM-dHSxtxwQ_Pwwz._2Sj4-UDM-dHSxtxwQ_Pwwz ._DialogInputContainer, .aqvbkhC1ejt4s8QvWA-c5 .TSlxCkeUMGwzmg21_WU8-._1W4bbifjEN3KdqKEhpmies, ._2q7nbQP9JNdtqFAxP5RHNZ ._3Cdh-BVkfxPJQNz_etZjUd._181cYsjHaaMo4th6NXPkPR, ._28dkcmodlp5Ooe1EJDdzUs ._2b5Wr4EPgFV-0TlrAIea5- .XBOPCwP2Bo8up1QjGtUiI ._15gxV6Q8_KW_-utK740dEf:hover, ._10T2j3nynZSKnIKIRrTLr4 ._33DvvaAAsKaD30JrKzcL38 ._2xqwHms_kkW3jPhfsUTa8:hover, ._1xeg0ZFm1DNPKbA9uOjFlT ._2U0q8iFEUZp8KxE3zz1C26 ._1Q-eMJi4hHWapnM5jkXqg7, ._1xeg0ZFm1DNPKbA9uOjFlT ._2U0q8iFEUZp8KxE3zz1C26 ._3hpEn4H6tjIGLbf8GKA0vS ._2TsagsVi0bFDnNztolUHP4:hover, ._1xeg0ZFm1DNPKbA9uOjFlT ._2U0q8iFEUZp8KxE3zz1C26 ._1Hz4oAP9fiba9H98tjnior ._3a1Y1FB5NkaJJ0iV5-qUbJ:hover, ._2AtQdZFU-mOGE-_3SuQKkw, ._1J8umaxlHnD4poewN6r8wp, ._3QLt_cnTY9p8pNOj9jxTxR, .NoRFSLSfwRijJQt7R51OT, ._1llZalHthucWjyKqSkf7fR, ._3yP_pf4vx1Q4W0mt2DR32P, ._19SMSHLlXqSLnXM3NjDNBS, ._1Ze1RZ7I8e5cSlaWAl48bh, ._2MjBd1kKOEyVfqBN5OQOb1, ._2swvcAycL4d0UoHFDoe6-d, ._3i-XV362MvNEX3j_oWQDmQ, ._3s28A0XlOXUOAWRIuBKHuH, ._3U3h5KQ5DocAUo4lO8cL5l, ._1FyBL6obxHQ2Z2CsaV2Gbz .DialogBody ._3sXdOJ9DEh5zdS54_ptwgW ._1SKB0Xc7OpWlOlr-wSi8ho, ._1FyBL6obxHQ2Z2CsaV2Gbz .DialogBody ._3ZhiKhciPyiGGxDFuGOYpc .pht3SaejGcAJEjNG8d6nd ._2TJyz1F52D-aTOe8RdwFIK, ._1FyBL6obxHQ2Z2CsaV2Gbz .DialogBody ._3ZhiKhciPyiGGxDFuGOYpc .pht3SaejGcAJEjNG8d6nd .iWdskI4in7pZbS0ETm5QQ .hh4HHQrSWl4R_8NqlKs5m ._2AQozUFcCfBh1F-oJjSTzj"
   },
 }
@@ -2478,7 +2529,6 @@ function addColorCustomizationStyles() {
     #color-modal-overlay {
       position: fixed;
       top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0, 0, 0, 0.5);
       z-index: 10000;
       display: flex;
       align-items: center;
@@ -2708,6 +2758,53 @@ function addColorCustomizationStyles() {
       align-items: center;
     }
 
+    .animation-control {
+      display: grid;
+      grid-template-columns: 50px 1fr;
+      gap: 8px;
+      align-items: center;
+      margin-top: 6px;
+    }
+
+    .animation-control label {
+      color: #ccc;
+      font-size: 12px;
+    }
+
+    .animation-type-select {
+      background: #2a2a2a;
+      color: #ccc;
+      border: 1px solid #555;
+      border-radius: 4px;
+      padding: 3px 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .animation-type-select:focus {
+      outline: none;
+      border-color: #FF9500;
+    }
+
+    .speed-control {
+      display: grid;
+      grid-template-columns: 50px 1fr 45px;
+      gap: 8px;
+      align-items: center;
+      margin-top: 6px;
+    }
+
+    .speed-control label {
+      color: #ccc;
+      font-size: 12px;
+    }
+
+    .speed-value {
+      color: white;
+      font-size: 12px;
+      text-align: right;
+    }
+
     .angle-control label {
       color: #ccc;
       font-size: 12px;
@@ -2737,17 +2834,52 @@ function addColorCustomizationStyles() {
     }
 
     .gradient-preview {
-      height: 60px;
+      position: relative;
+      isolation: isolate;
+      overflow: hidden;
+      height: 84px;
       border-radius: 6px;
       border: 1px solid #666;
-      display: flex;
-      align-items: center;
-      justify-content: center;
       color: white;
-      font-size: 11px;
+      font-size: 10px;
       text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
       font-weight: bold;
     }
+    .gradient-preview .pv-bg { position: absolute; inset: 0; z-index: 0; }
+    .gradient-preview .pv-label { position: absolute; top: 4px; left: 8px; z-index: 2; opacity: 0.85; }
+    .gradient-preview .pv-tiles {
+      position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 1;
+      display: flex; gap: 6px; align-items: flex-end;
+    }
+    .gradient-preview .pv-tiles i {
+      flex: 1; height: 38px; border-radius: 3px;
+      background: linear-gradient(160deg, #3b4a63, #1b2230);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    }
+    .gradient-preview .pv-tiles i:nth-child(2) { background: linear-gradient(160deg, #7a3b3b, #2b1616); }
+    .gradient-preview .pv-tiles i:nth-child(3) { background: linear-gradient(160deg, #3b7a5a, #14261d); }
+    .gradient-preview .pv-tiles i:nth-child(4) { background: linear-gradient(160deg, #7a6a3b, #2b2514); }
+    .gradient-preview .pv-tiles i:nth-child(5) { background: linear-gradient(160deg, #5a3b7a, #1d1429); }
+    @keyframes pv-hue { 0% { filter: hue-rotate(0deg); } 100% { filter: hue-rotate(360deg); } }
+    @keyframes pv-br  { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+    .color-section-title .section-title-text { flex: 1; }
+    .section-reset {
+      background: rgba(255,255,255,0.08);
+      color: #ddd;
+      border: 1px solid #555;
+      border-radius: 5px;
+      padding: 3px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .section-reset:hover { background: rgba(255,149,0,0.25); border-color: #FF9500; color: #fff; }
+    .preset-select {
+      background: #2a2a2a; color: #ccc; border: 1px solid #555; border-radius: 4px;
+      padding: 3px 6px; font-size: 12px; cursor: pointer;
+    }
+    .preset-select:focus { outline: none; border-color: #FF9500; }
 
     #color-modal-footer {
       display: flex;
@@ -2812,6 +2944,91 @@ function addColorCustomizationStyles() {
       color: #888;
       font-size: 11px;
     }
+
+    /* ============ Layout refresh ============ */
+    #color-modal { width: 1040px; max-height: 88vh; }
+    .color-sections-grid {
+      grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+      gap: 16px;
+      margin-top: 0;
+      align-items: start;
+    }
+    .color-section {
+      background: #262626;
+      border: 1px solid #3d3d3d;
+      border-radius: 10px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: border-color 0.15s;
+    }
+    .color-section:hover { border-color: #666; }
+    .color-section-title { margin: 0; gap: 10px; align-items: center; }
+    .color-section-title .color-preview { display: none; }
+    .section-title-block { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .section-title-text { font-size: 14px; font-weight: 700; color: #fff; line-height: 1.2; }
+    .section-hint { font-size: 11px; color: #8b8b8b; margin-top: 2px; line-height: 1.25; }
+    .gradient-preview { height: 96px; border-radius: 8px; border: 1px solid #4a4a4a; }
+    .color-controls { gap: 10px; }
+    .color-actions { margin-top: 0; justify-content: space-between; }
+    .group-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #9a9a9a; }
+    .add-color {
+      flex: none;
+      background: transparent;
+      color: #7ddc82;
+      border: 1px dashed #4b7a4e;
+      padding: 4px 10px;
+      font-size: 11px;
+    }
+    .add-color:hover { background: rgba(76,175,80,0.15); }
+    .add-color:disabled { background: transparent; color: #666; border-color: #444; }
+    .color-row { grid-template-columns: 18px 44px 1fr 90px 26px; padding: 5px 8px; gap: 8px; }
+    .hex-input { width: 100%; box-sizing: border-box; }
+    .control-group {
+      display: flex; flex-direction: column; gap: 8px;
+      padding-top: 10px; border-top: 1px solid #383838;
+    }
+    .control-group .angle-control,
+    .control-group .animation-control,
+    .control-group .speed-control { margin-top: 0; }
+    .control-group .angle-control,
+    .control-group .speed-control { grid-template-columns: 56px 1fr 44px; }
+    .control-group .animation-control { grid-template-columns: 56px 1fr; }
+    .control-group label { font-size: 12px; color: #aaa; }
+    .animation-type-select, .preset-select { width: 100%; box-sizing: border-box; }
+
+    /* Footer: sticky, one tidy row */
+    #color-modal-footer {
+      position: sticky;
+      bottom: -20px;
+      margin: 0 -20px -20px;
+      padding: 12px 20px;
+      background: linear-gradient(145deg, #2a2a2a, #1a1a1a);
+      border-top: 1px solid #444;
+      border-radius: 0 0 12px 12px;
+      flex-wrap: wrap;
+      gap: 10px;
+      z-index: 10;
+    }
+    #color-modal-footer .footer-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    #color-modal-footer .color-modal-button {
+      background: #333;
+      color: #ddd;
+      border: 1px solid #4a4a4a;
+      padding: 7px 12px;
+      font-size: 12px;
+      transform: none;
+    }
+    #color-modal-footer .color-modal-button:hover { background: #3f3f3f; border-color: #777; transform: none; }
+    #color-modal-footer #apply-colors {
+      background: linear-gradient(135deg, #4CAF50, #45a049);
+      color: #fff;
+      border-color: transparent;
+      font-weight: 700;
+      padding: 8px 18px;
+    }
+    #color-modal-footer #apply-colors:hover { background: linear-gradient(135deg, #45a049, #3d8b40); }
   `
   document.head.appendChild(colorStyle)
 }
@@ -2832,6 +3049,30 @@ function hexAlphaToRGBA(hex, alpha) {
   const b = parseInt(hex.slice(5, 7), 16)
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
+
+// Friendly names / hints shown in the Colors modal (config keys and saved data are unchanged)
+const SECTION_LABELS = {
+  gamelistBackground:   { label: "Game list",       hint: "Left sidebar behind your game list" },
+  gamesBackground:      { label: "Games grid",      hint: "Main background of the library" },
+  FriendList:           { label: "Friends & chat",  hint: "Friends list and chat window" },
+  BigPicture:           { label: "Big Picture",     hint: "Applied through Save BP CSS" },
+  headerFooter:         { label: "Header & footer", hint: "Top bar and bottom bar" },
+  propertiesBackground: { label: "Game properties", hint: "Game properties window" },
+  downloadsBackground:  { label: "Downloads",       hint: "Downloads page" },
+  Dropdowns:            { label: "Buttons & menus", hint: "Buttons, dropdowns and highlights" },
+}
+
+// Ready-made gradients for the Colors modal (alpha is always 1)
+const COLOR_PRESETS = [
+  { name: "Sunset",   angle: 135, colors: ["#ff512f", "#dd2476", "#3a0ca3"] },
+  { name: "Ocean",    angle: 225, colors: ["#0f2027", "#203a43", "#2c5364"] },
+  { name: "Aurora",   angle: 200, colors: ["#0f0c29", "#302b63", "#24c6dc"] },
+  { name: "Midnight", angle: 225, colors: ["#000000", "#19002e", "#061f30"] },
+  { name: "Plum",     angle: 225, colors: ["#5a0a37", "#19002e", "#09578d"] },
+  { name: "Forest",   angle: 160, colors: ["#0b1f14", "#134e3a", "#2c7a4b"] },
+  { name: "Ember",    angle: 150, colors: ["#1a0000", "#6b0f1a", "#ff6b35"] },
+  { name: "Graphite", angle: 180, colors: ["#0a0a0a", "#1c1c1c", "#2e2e2e"] },
+]
 
 /**
  * Generate CSS gradient string with percentages
@@ -2873,7 +3114,13 @@ function loadColorConfig() {
             config[key].colors = config[key].colors.map(hex => ({ hex, alpha: 1 }))
           }
         }
+        // Migrate missing animation/speed fields
+        if (config[key].animation === undefined) config[key].animation = "none"
+        if (config[key].speed    === undefined) config[key].speed    = 4
       })
+      // Keep Big Picture's selector from the defaults so old saved configs pick up fixes
+      if (config.BigPicture && DEFAULT_COLORS.BigPicture) config.BigPicture.selector = DEFAULT_COLORS.BigPicture.selector
+      if (config.gamesBackground && DEFAULT_COLORS.gamesBackground) config.gamesBackground.selector = DEFAULT_COLORS.gamesBackground.selector
       return { ...DEFAULT_COLORS, ...config }
     } catch (e) {
       console.error("[ColorCustomizer] Error loading config:", e)
@@ -2895,6 +3142,10 @@ function saveColorConfig(config) {
  * @param {Object} config - Color configuration object
  */
 function applyColorConfig(config) {
+  // Persist so the FriendList frame receives the "storage" event.
+  // BigPicture has its own localStorage — use "Save BP CSS" button instead.
+  localStorage.setItem(COLOR_CONFIG_KEY, JSON.stringify(config))
+
   let existingStyle = document.getElementById("custom-color-overrides")
   if (!existingStyle) {
     existingStyle = document.createElement("style")
@@ -2902,11 +3153,105 @@ function applyColorConfig(config) {
     document.head.appendChild(existingStyle)
   }
 
+  // Helper: rotate hue of a hex color by degrees
+  function rotateHue(hex, deg) {
+    const r = parseInt(hex.slice(1,3),16)/255
+    const g = parseInt(hex.slice(3,5),16)/255
+    const b = parseInt(hex.slice(5,7),16)/255
+    const max = Math.max(r,g,b), min = Math.min(r,g,b), d = max - min
+    let h = 0, s = max === 0 ? 0 : d/max, v = max
+    if (d !== 0) {
+      if (max === r) h = ((g-b)/d + (g<b?6:0))/6
+      else if (max === g) h = ((b-r)/d + 2)/6
+      else h = ((r-g)/d + 4)/6
+    }
+    h = ((h*360 + deg) % 360 + 360) % 360 / 360
+    const i = Math.floor(h*6), f = h*6-i, p = v*(1-s), q = v*(1-f*s), t = v*(1-(1-f)*s)
+    let nr,ng,nb
+    switch(i%6){case 0:nr=v;ng=t;nb=p;break;case 1:nr=q;ng=v;nb=p;break;case 2:nr=p;ng=v;nb=t;break;case 3:nr=p;ng=q;nb=v;break;case 4:nr=t;ng=p;nb=v;break;default:nr=v;ng=p;nb=q;}
+    return '#'+[nr,ng,nb].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join('')
+  }
+
+  function generateRadial(colors, stops = null) {
+    const s = stops || colors.map((_,i) => i === colors.length-1 ? 100 : Math.round(i*100/(colors.length-1)))
+    const colorStops = colors.map((c,i) => {
+      const rgba = hexAlphaToRGBA(c.hex, c.alpha)
+      return `${rgba} ${s[i]}%`
+    }).join(', ')
+    return `radial-gradient(circle at center, ${colorStops})`
+  }
+
+  // Keys handled by external frames — skip them here to avoid injecting
+  // selectors (.friendlist, body) that don't exist in the library frame
+  const EXTERNAL_KEYS = new Set(["FriendList", "BigPicture"])
+
   let css = ""
-  Object.values(config).forEach(section => {
-    if (section.selector && section.colors && section.angle !== undefined) {
-      const gradient = generateGradient(section.colors, section.angle)
-      css += `${section.selector} { background-image: ${gradient} !important; }\n`
+
+  Object.entries(config).forEach(([key, section]) => {
+    if (EXTERNAL_KEYS.has(key)) return  // handled by friends/bigpicture frames
+    if (!section.selector || !section.colors || section.angle === undefined) return
+
+    const gradient = generateGradient(section.colors, section.angle)
+    const animType = section.animation || "none"
+    const speed    = section.speed ?? 4
+    const sel      = section.selector
+
+    if (animType === "none") {
+      // Cancel any running JS radial loop for this key
+      if (window._moRadialLoops?.[key]) {
+        cancelAnimationFrame(window._moRadialLoops[key])
+        delete window._moRadialLoops[key]
+      }
+      css += `${sel} { background-image: ${gradient} !important; }\n`
+
+    } else if (animType === "rotate") {
+      // Color Rotate left→right: animates hue-rotate filter on ::before
+      // so children (game covers, text) are not affected
+      css += `@keyframes mo-anim-${key} { 0% { filter: hue-rotate(0deg); } 100% { filter: hue-rotate(360deg); } }\n`
+      css += `${sel} { position: relative !important; isolation: isolate !important; }\n`
+      css += `${sel}::before { content: "" !important; position: absolute !important; inset: 0 !important; z-index: 0 !important; background-image: ${gradient} !important; animation: mo-anim-${key} ${speed}s linear infinite !important; pointer-events: none !important; }\n`
+      css += `${sel} > * { position: relative !important; z-index: 1 !important; }\n`
+
+    } else if (animType === "radial") {
+      // Radial Rotate: colors cycle outward from center in expanding circles.
+      // CSS can't interpolate background-image, so we drive this via a JS RAF
+      // loop that updates a CSS custom property --mo-hue-${key} each frame,
+      // and a conic+radial combo that shifts with it.
+      // We inject the base radial and the custom property fallback here;
+      // the JS loop is started by applyColorConfig after building the CSS.
+      css += `${sel} { position: relative !important; isolation: isolate !important; --mo-hue-${key}: 0deg; }\n`
+      css += `${sel}::before { content: "" !important; position: absolute !important; inset: 0 !important; z-index: 0 !important; background-image: ${generateRadial(section.colors)} !important; background-attachment: fixed !important; background-size: cover !important; background-position: center center !important; filter: hue-rotate(var(--mo-hue-${key})) !important; animation: none !important; pointer-events: none !important; }\n`
+      css += `${sel} > * { position: relative !important; z-index: 1 !important; }\n`
+
+      // Schedule JS-driven animation after CSS is applied
+      const msPerCycle = speed * 1000
+      ;(function startRadialLoop(selector, msPerCycle, configKey) {
+        // Cancel any existing loop for this key
+        if (window._moRadialLoops) {
+          if (window._moRadialLoops[configKey]) {
+            cancelAnimationFrame(window._moRadialLoops[configKey])
+          }
+        } else {
+          window._moRadialLoops = {}
+        }
+
+        function tick(ts) {
+          const hue = ((ts % msPerCycle) / msPerCycle) * 360
+          document.querySelectorAll(selector).forEach(el => {
+            el.style.setProperty(`--mo-hue-${configKey}`, `${hue.toFixed(1)}deg`)
+          })
+          window._moRadialLoops[configKey] = requestAnimationFrame(tick)
+        }
+
+        window._moRadialLoops[configKey] = requestAnimationFrame(tick)
+      })(sel, msPerCycle, key)
+
+    } else if (animType === "breathe") {
+      // Opacity breathe via ::before so children are not affected
+      css += `@keyframes mo-anim-${key} { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }\n`
+      css += `${sel} { position: relative !important; isolation: isolate !important; }\n`
+      css += `${sel}::before { content: "" !important; position: absolute !important; inset: 0 !important; z-index: 0 !important; background-image: ${gradient} !important; animation: mo-anim-${key} ${speed}s ease-in-out infinite !important; pointer-events: none !important; }\n`
+      css += `${sel} > * { position: relative !important; z-index: 1 !important; }\n`
     }
   })
 
@@ -2972,29 +3317,61 @@ function createColorModal() {
   Object.entries(currentConfig).forEach(([key, section]) => {
     const sectionDiv = document.createElement("div")
     sectionDiv.className = "color-section"
+    const meta = { label: section.name, hint: "" }
+    sectionDiv.dataset.key = key
     sectionDiv.innerHTML = `
       <div class="color-section-title">
         <div class="color-preview" data-key="${key}"></div>
-        ${section.name}
+        <div class="section-title-block">
+          <span class="section-title-text">${meta.label}</span>
+          ${meta.hint ? `<span class="section-hint">${meta.hint}</span>` : ""}
+        </div>
+        <button class="section-reset" data-key="${key}" title="Reset only this section to its default">↺ Reset</button>
+      </div>
+      <div class="gradient-preview" data-key="${key}">
+        <div class="pv-bg"></div>
+        <span class="pv-label">Preview</span>
+        <div class="pv-tiles"><i></i><i></i><i></i><i></i><i></i></div>
       </div>
       <div class="color-controls">
+        <div class="color-actions">
+          <span class="group-label">Colors</span>
+          <button class="add-color" data-key="${key}" ${section.colors.length >= 6 ? 'disabled' : ''}>
+            ➕ Add Color (${section.colors.length}/6)
+          </button>
+        </div>
         <div class="colors-container" data-key="${key}">
           ${section.colors.map((color, index) =>
       createColorRowHTML(color, index, key, section.colors.length > 2)
     ).join('')}
         </div>
-        <div class="color-actions">
-          <button class="add-color" data-key="${key}" ${section.colors.length >= 6 ? 'disabled' : ''}>
-            ➕ Add Color (${section.colors.length}/6)
-          </button>
-        </div>
-        <div class="angle-control">
-          <label>Angle:</label>
-          <input type="range" class="angle-slider" min="0" max="360" value="${section.angle}" data-key="${key}">
-          <span class="angle-value">${section.angle}°</span>
-        </div>
-        <div class="gradient-preview" data-key="${key}">
-          Preview
+        <div class="control-group">
+          <div class="angle-control">
+            <label>Angle:</label>
+            <input type="range" class="angle-slider" min="0" max="360" value="${section.angle}" data-key="${key}">
+            <span class="angle-value">${section.angle}°</span>
+          </div>
+          <div class="animation-control">
+            <label>Anim:</label>
+            <select class="animation-type-select" data-key="${key}">
+              <option value="none"    ${(section.animation||'none')==='none'    ? 'selected':''}>None</option>
+              <option value="rotate"  ${(section.animation||'none')==='rotate'  ? 'selected':''}>Color Rotate (L → R)</option>
+              <option value="radial"  ${(section.animation||'none')==='radial'  ? 'selected':''}>Color Rotate (radial)</option>
+              <option value="breathe" ${(section.animation||'none')==='breathe' ? 'selected':''}>Breathe</option>
+            </select>
+          </div>
+          <div class="speed-control" data-key="${key}" ${(section.animation||'none')==='none' ? 'style="display:none"' : ''}>
+            <label>Speed:</label>
+            <input type="range" class="speed-slider" min="1" max="20" value="${section.speed ?? 4}" data-key="${key}">
+            <span class="speed-value">${section.speed ?? 4}s</span>
+          </div>
+          <div class="animation-control">
+            <label>Preset:</label>
+            <select class="preset-select" data-key="${key}">
+              <option value="">Choose a preset…</option>
+              ${COLOR_PRESETS.map((pr, i) => `<option value="${i}">${pr.name}</option>`).join("")}
+            </select>
+          </div>
         </div>
       </div>
     `
@@ -3004,14 +3381,15 @@ function createColorModal() {
   const footer = document.createElement("div")
   footer.id = "color-modal-footer"
   footer.innerHTML = `
-    <div>
-      <span class="info-text">💡 Real-time preview • 2-6 colors per gradient</span>
-    </div>
-    <div>
-      <button id="reset-colors" class="color-modal-button">🔄 Reset</button>
+    <div class="footer-group">
+      <button id="reset-colors" class="color-modal-button" title="Reset every section to defaults">🔄 Reset</button>
       <button id="export-colors" class="color-modal-button">📁 Export</button>
       <button id="import-colors" class="color-modal-button">📂 Import</button>
-      <button id="apply-colors" class="color-modal-button">✅ Apply & Save</button>
+      <button id="save-bp-css" class="color-modal-button" title="Download bigpicture.custom.css, then move it to your theme folder">🖥️ Save BP CSS</button>
+    </div>
+    <div class="footer-group footer-right">
+      <span class="info-text">💡 Real-time preview • 2-6 colors per gradient</span>
+      <button id="apply-colors" class="color-modal-button">✅ Apply &amp; Save</button>
     </div>
     <input type="file" id="color-import-input" accept=".json" style="display: none;">
   `
@@ -3022,10 +3400,11 @@ function createColorModal() {
   overlay.appendChild(modal)
 
   setupEnhancedColorModalEvents(overlay, currentConfig)
-  updateAllPreviews(currentConfig)
 
   document.body.appendChild(overlay)
   colorModalOpen = true
+  // Must run AFTER the overlay is in the document: updatePreview() uses document.querySelector
+  updateAllPreviews(currentConfig)
 
   // Make modal draggable
   makeModalDraggable(modal, header)
@@ -3336,6 +3715,71 @@ function setupEnhancedColorModalEvents(overlay, config) {
         applyColorConfig(config)
       })
     }
+
+    // Push values into a section (config + controls + preview + live apply)
+    const applySectionValues = (patch) => {
+      Object.assign(config[key], patch)
+      const container = overlay.querySelector(`.colors-container[data-key="${key}"]`)
+      const addButton = overlay.querySelector(`.add-color[data-key="${key}"]`)
+      refreshSectionColors(key, config[key], container, addButton, config)
+      const aSlider = overlay.querySelector(`.angle-slider[data-key="${key}"]`)
+      if (aSlider) { aSlider.value = config[key].angle; aSlider.nextElementSibling.textContent = `${config[key].angle}°` }
+      const aSel = overlay.querySelector(`.animation-type-select[data-key="${key}"]`)
+      if (aSel) aSel.value = config[key].animation || "none"
+      const sCtl = overlay.querySelector(`.speed-control[data-key="${key}"]`)
+      if (sCtl) sCtl.style.display = (config[key].animation || "none") === "none" ? "none" : "grid"
+      const sSl = overlay.querySelector(`.speed-slider[data-key="${key}"]`)
+      if (sSl) { sSl.value = config[key].speed ?? 4; sSl.nextElementSibling.textContent = `${config[key].speed ?? 4}s` }
+      updatePreview(key, config[key])
+      applyColorConfig(config)
+    }
+
+    const resetSectionBtn = overlay.querySelector(`.section-reset[data-key="${key}"]`)
+    if (resetSectionBtn) {
+      resetSectionBtn.addEventListener("click", () => {
+        const def = DEFAULT_COLORS[key]
+        if (!def) return
+        const d = JSON.parse(JSON.stringify(def))
+        applySectionValues({ colors: d.colors, angle: d.angle, animation: d.animation || "none", speed: d.speed ?? 4 })
+        showNotification(`↺ ${config[key].name} reset`)
+      })
+    }
+
+    const presetSelect = overlay.querySelector(`.preset-select[data-key="${key}"]`)
+    if (presetSelect) {
+      presetSelect.addEventListener("change", (e) => {
+        const preset = COLOR_PRESETS[parseInt(e.target.value, 10)]
+        if (!preset) return
+        applySectionValues({ colors: preset.colors.map((hex) => ({ hex, alpha: 1 })), angle: preset.angle })
+        e.target.value = ""
+      })
+    }
+
+    // Animation type dropdown
+    const animSelect = overlay.querySelector(`.animation-type-select[data-key="${key}"]`)
+    const speedControl = overlay.querySelector(`.speed-control[data-key="${key}"]`)
+    const speedSlider = overlay.querySelector(`.speed-slider[data-key="${key}"]`)
+    const speedValue = speedSlider?.nextElementSibling
+
+    if (animSelect) {
+      animSelect.addEventListener("change", (e) => {
+        config[key].animation = e.target.value
+        // Show/hide speed control
+        if (speedControl) speedControl.style.display = e.target.value === "none" ? "none" : "grid"
+        updatePreview(key, config[key])
+        applyColorConfig(config)
+      })
+    }
+
+    if (speedSlider && speedValue) {
+      speedSlider.addEventListener("input", (e) => {
+        const speed = parseInt(e.target.value)
+        config[key].speed = speed
+        speedValue.textContent = `${speed}s`
+        updatePreview(key, config[key])
+        applyColorConfig(config)
+      })
+    }
   })
 
   // Apply button
@@ -3368,6 +3812,11 @@ function setupEnhancedColorModalEvents(overlay, config) {
   const exportBtn = overlay.querySelector("#export-colors")
   if (exportBtn) {
     exportBtn.addEventListener("click", () => exportColorConfig(config))
+  }
+
+  const saveBpBtn = overlay.querySelector("#save-bp-css")
+  if (saveBpBtn) {
+    saveBpBtn.addEventListener("click", () => saveBigPictureCSS(config))
   }
 
   const importBtn = overlay.querySelector("#import-colors")
@@ -3452,9 +3901,7 @@ function updateModalAfterReset(overlay, config) {
     angleValue.textContent = `${section.angle}°`
     
     // 5. Actualizar previews
-    const gradient = generateGradient(section.colors, section.angle)
-    if (preview) preview.style.background = gradient
-    if (gradientPreview) gradientPreview.style.background = gradient
+    updatePreview(key, section)
     
     // 6. FORZAR ACTUALIZACIÓN DE INPUTS DE COLOR
     const colorInputs = container.querySelectorAll('.color-input')
@@ -3517,9 +3964,7 @@ function forceUpdateModal(overlay, config) {
     angleValue.textContent = `${section.angle}°`
     
     // 5. Actualizar previews
-    const gradient = generateGradient(section.colors, section.angle)
-    if (preview) preview.style.background = gradient
-    if (gradientPreview) gradientPreview.style.background = gradient
+    updatePreview(key, section)
     
     // 6. FORZAR ACTUALIZACIÓN DE INPUTS DE COLOR
     const colorInputs = container.querySelectorAll('.color-input')
@@ -3580,11 +4025,11 @@ function testResetButton() {
 
 // Setup color events for a section
 function setupColorEvents(section, key, config, addBtn) {
-  // Remover eventos previos para evitar duplicados
-  const newSection = section.cloneNode(true)
-  section.parentNode.replaceChild(newSection, section)
-  section = newSection
-  
+  // Use a marker to prevent duplicate listeners instead of cloneNode
+  // (cloneNode breaks the caller's reference to the live DOM node)
+  if (section._colorEventsSetup) return
+  section._colorEventsSetup = true
+
   section.addEventListener("input", (e) => {
     if (e.target.classList.contains("color-input")) {
       const index = parseInt(e.target.closest(".color-row").dataset.index)
@@ -3637,7 +4082,6 @@ function setupColorEvents(section, key, config, addBtn) {
   })
 }
 
-// Refresh section colors HTML
 function refreshSectionColors(key, sectionConfig, container, addBtn, globalConfig = null) {
   console.log(`[ColorCustomizer] Refreshing section ${key} with ${sectionConfig.colors.length} colors`)
   
@@ -3650,6 +4094,9 @@ function refreshSectionColors(key, sectionConfig, container, addBtn, globalConfi
     // Update add button
     addBtn.disabled = sectionConfig.colors.length >= 6
     addBtn.textContent = `➕ Add Color (${sectionConfig.colors.length}/6)`
+
+    // Reset marker so setupColorEvents re-attaches listeners on the rebuilt content
+    delete container._colorEventsSetup
 
     // Re-setup events for new elements
     const configForEvents = globalConfig || { [key]: sectionConfig }
@@ -3665,13 +4112,32 @@ function refreshSectionColors(key, sectionConfig, container, addBtn, globalConfi
 // Update preview for a specific section
 function updatePreview(key, sectionConfig) {
   const preview = document.querySelector(`.color-preview[data-key="${key}"]`)
-  const gradientPreview = document.querySelector(`.gradient-preview[data-key="${key}"]`)
+  const box = document.querySelector(`.gradient-preview[data-key="${key}"]`)
+  if (!preview || !box) return
 
-  if (preview && gradientPreview) {
-    const gradient = generateGradient(sectionConfig.colors, sectionConfig.angle)
-    preview.style.background = gradient
-    gradientPreview.style.background = gradient
+  const linear = generateGradient(sectionConfig.colors, sectionConfig.angle)
+  preview.style.background = linear
+
+  const bg = box.querySelector(".pv-bg")
+  if (!bg) return
+  const anim = sectionConfig.animation || "none"
+  const speed = sectionConfig.speed ?? 4
+
+  if (anim === "radial") {
+    const n = Math.max(sectionConfig.colors.length - 1, 1)
+    const stops = sectionConfig.colors
+      .map((c, i) => `${hexAlphaToRGBA(c.hex, c.alpha)} ${Math.round((i / n) * 100)}%`)
+      .join(", ")
+    bg.style.background = `radial-gradient(circle at 50% 50%, ${stops})`
+  } else {
+    bg.style.background = linear
   }
+
+  // restart the CSS animation so speed/type changes show immediately
+  bg.style.animation = "none"
+  void bg.offsetWidth
+  if (anim === "rotate" || anim === "radial") bg.style.animation = `pv-hue ${speed}s linear infinite`
+  else if (anim === "breathe") bg.style.animation = `pv-br ${speed}s ease-in-out infinite`
 }
 
 // Update all previews
@@ -3733,6 +4199,71 @@ function exportColorConfig(config) {
   link.click()
 
   showNotification("📁 Color configuration exported!")
+}
+
+// Build CSS string for bigpicture.custom.css from the BigPicture config section
+function generateBigPictureCSS(config) {
+  const section = config["BigPicture"]
+  if (!section || !section.colors || !section.colors.length) return null
+
+  const { colors, angle = 135, animation: animType = "none", speed = 4 } = section
+  const sel = "._3LYP1SIxyoky-yW9Ug_1fq.b084mAvY8rgVMr3H04g9g:is(#GamepadUI_Full_Root, #popup_target *)" // always use the current selector (saved configs may hold an old one)
+
+  function ha(hex, alpha) {
+    const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16)
+    return `rgba(${r},${g},${b},${alpha??1})`
+  }
+  function grad(cols, ang) {
+    const n = Math.max(cols.length-1,1)
+    return `linear-gradient(${ang}deg,${cols.map((c,i)=>`${ha(c.hex,c.alpha)} ${Math.round(i/n*100)}%`).join(",")})`
+  }
+  function radialGrad(cols) {
+    const n = Math.max(cols.length-1,1)
+    return `radial-gradient(circle at 50% 50%,${cols.map((c,i)=>`${ha(c.hex,c.alpha)} ${Math.round(i/n*100)}%`).join(",")})`
+  }
+
+  let css = `/**\n * bigpicture.custom.css — Steam 2.0 Modular\n * Auto-generated by the Colors modal in libraryroot.custom.js\n * Last updated: ${new Date().toISOString()}\n */\n\n`
+
+  if (animType === "none") {
+    css += `${sel} {\n  background: ${grad(colors,angle)} !important;\n  background-image: ${grad(colors,angle)} !important;\n}\n`
+  } else if (animType === "rotate") {
+    css += `@keyframes bp-rot { 0% { filter: hue-rotate(0deg); } 100% { filter: hue-rotate(360deg); } }\n`
+    css += `${sel} { position: relative !important; isolation: isolate !important; }\n`
+    css += `${sel}::before { content: "" !important; position: absolute !important; inset: 0 !important; z-index: 0 !important;\n  background-image: ${grad(colors,angle)} !important;\n  animation: bp-rot ${speed}s linear infinite !important; pointer-events: none !important; }\n`
+    css += `${sel} > * { position: relative !important; z-index: 1 !important; }\n`
+  } else if (animType === "radial") {
+    css += `/* Radial color animation is handled by bigpicture.custom.js */\n`
+    css += `${sel} { position: relative !important; isolation: isolate !important; --bp-hue: 0deg; --bp-cx: 50%; --bp-cy: 50%; }\n`
+    css += `${sel}::before { content: "" !important; position: absolute !important; inset: 0 !important; z-index: 0 !important;\n  background-image: ${radialGrad(colors)} !important;\n  filter: hue-rotate(var(--bp-hue)) !important; pointer-events: none !important; }\n`
+    css += `${sel} > * { position: relative !important; z-index: 1 !important; }\n`
+  } else if (animType === "breathe") {
+    css += `@keyframes bp-br { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }\n`
+    css += `${sel} { position: relative !important; isolation: isolate !important; }\n`
+    css += `${sel}::before { content: "" !important; position: absolute !important; inset: 0 !important; z-index: 0 !important;\n  background-image: ${grad(colors,angle)} !important;\n  animation: bp-br ${speed}s ease-in-out infinite !important; pointer-events: none !important; }\n`
+    css += `${sel} > * { position: relative !important; z-index: 1 !important; }\n`
+  }
+
+  return css
+}
+
+// Save bigpicture.custom.css — same download pattern as exportColorConfig
+function saveBigPictureCSS(config) {
+  const css = generateBigPictureCSS(config)
+  if (!css) {
+    showNotification("❌ No Big Picture config found")
+    return
+  }
+
+  const blob = new Blob([css], { type: "text/css" })
+  const link = document.createElement("a")
+  link.href = URL.createObjectURL(blob)
+  link.download = "bigpicture.custom.css"
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(link.href)
+
+  showNotification("🖥️ bigpicture.custom.css downloaded — move it to your theme folder")
 }
 
 // Import color configuration
