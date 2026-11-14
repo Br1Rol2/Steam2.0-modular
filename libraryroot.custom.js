@@ -137,6 +137,38 @@ observeFriendsListPanel();
   let isApplyingOrder = false
   let isDraggingGrid = false
   let gridDragInstalled = false
+
+  // ── Hide Shelf / Hide News: injected <style> tags ──
+  // CSS survives React re-renders and view changes (store → library, game page → library, ...),
+  // and is applied as soon as this script loads, before any panel exists.
+  const SHELF_CSS = "._3SkuN_ykQuWGF94fclHdhJ{display:none!important}"
+  const NEWS_CSS  = "._17uEBe5Ri8TMsnfELvs8-N{display:none!important}"
+
+  function setStyleTag(id, css) {
+    let el = document.getElementById(id)
+    if (!css) { if (el) el.textContent = ""; return }
+    if (!el) {
+      el = document.createElement("style")
+      el.id = id
+      ;(document.head || document.documentElement).appendChild(el)
+    }
+    if (el.textContent !== css) el.textContent = css
+  }
+
+  function syncHideStyles() {
+    let shelfHidden = false, newsHidden = true
+    try {
+      shelfHidden = localStorage.getItem("steam_hide_shelf") === "true"
+      const n = localStorage.getItem("steam_hide_news")
+      newsHidden = n === null ? true : n === "true"
+    } catch (_) {}
+    setStyleTag("hide-shelf-style", shelfHidden ? SHELF_CSS : "")
+    setStyleTag("hide-news-style", newsHidden ? NEWS_CSS : "")
+  }
+  syncHideStyles()
+  document.addEventListener("DOMContentLoaded", syncHideStyles)
+  // Safety net: if Steam ever drops the <style> (head rebuilt), put it back
+  setInterval(syncHideStyles, 1500)
   let toggleContainer = null
   let visibilityObserver = null
   let gridRenderTimeout = null
@@ -2071,12 +2103,6 @@ observeFriendsListPanel();
           }
         }
 
-        // Also restore shelf visibility if it was wiped by React
-        if (localStorage.getItem("steam_hide_shelf") === "true") {
-          document.querySelectorAll("._3SkuN_ykQuWGF94fclHdhJ").forEach((el) => {
-            if (el.style.display !== "none") el.style.display = "none"
-          })
-        }
       }
 
       gridRenderTimeout = requestAnimationFrame(poll)
@@ -2200,9 +2226,9 @@ observeFriendsListPanel();
     const shelfSelector  = "._3SkuN_ykQuWGF94fclHdhJ"
 
     function applyShelfVisibility(hidden) {
-      document.querySelectorAll(shelfSelector).forEach((el) => {
-        el.style.display = hidden ? "none" : ""
-      })
+      // clear any inline display left by older versions, then let the <style> tag decide
+      document.querySelectorAll(shelfSelector).forEach((el) => { el.style.display = "" })
+      setStyleTag("hide-shelf-style", hidden ? SHELF_CSS : "")
     }
 
     const savedHideShelf = localStorage.getItem(HIDE_SHELF_KEY) === "true"
@@ -2222,13 +2248,7 @@ observeFriendsListPanel();
     const HIDE_NEWS_KEY = "steam_hide_news"
     const hideNewsToggle = document.getElementById("hide-news-toggle")
     function applyNewsVisibility(hidden) {
-      let st = document.getElementById("hide-news-style")
-      if (!st) {
-        st = document.createElement("style")
-        st.id = "hide-news-style"
-        document.head.appendChild(st)
-      }
-      st.textContent = hidden ? "._17uEBe5Ri8TMsnfELvs8-N{display:none!important}" : ""
+      setStyleTag("hide-news-style", hidden ? NEWS_CSS : "")
     }
     const storedNews = localStorage.getItem(HIDE_NEWS_KEY)
     const newsHidden = storedNews === null ? true : storedNews === "true"
@@ -3385,7 +3405,7 @@ function createColorModal() {
       <button id="reset-colors" class="color-modal-button" title="Reset every section to defaults">🔄 Reset</button>
       <button id="export-colors" class="color-modal-button">📁 Export</button>
       <button id="import-colors" class="color-modal-button">📂 Import</button>
-      <button id="save-bp-css" class="color-modal-button" title="Download bigpicture.custom.css, then move it to your theme folder">🖥️ Save BP CSS</button>
+      <button id="save-bp-css" class="color-modal-button" >🖥️ Save BP CSS</button>
     </div>
     <div class="footer-group footer-right">
       <span class="info-text">💡 Real-time preview • 2-6 colors per gradient</span>
@@ -3817,6 +3837,42 @@ function setupEnhancedColorModalEvents(overlay, config) {
   const saveBpBtn = overlay.querySelector("#save-bp-css")
   if (saveBpBtn) {
     saveBpBtn.addEventListener("click", () => saveBigPictureCSS(config))
+
+    // Hover hint, pinned to the top of the modal: explains where the downloaded file has to go
+    const modalEl = overlay.querySelector("#color-modal")
+    const showBpHint = () => {
+      let hint = document.getElementById("bp-save-hint")
+      if (!hint) {
+        hint = document.createElement("div")
+        hint.id = "bp-save-hint"
+        hint.innerHTML =
+          "<b>Big Picture colors need one manual step</b><br>" +
+          "1. Click <b>Save BP CSS</b> (the file goes to your Downloads folder).<br>" +
+          "2. Move <code>bigpicture.custom.css</code> to<br>" +
+          "<code>Steam\\millennium\\themes\\Steam2.0-modular</code> and replace the existing file.<br>" +
+          "3. Restart Big Picture (or Steam) to see the change."
+        hint.style.cssText =
+          "position:fixed;z-index:100002;max-width:440px;padding:10px 14px;border-radius:8px;" +
+          "background:#101820;color:#e6e6e6;border:1px solid #FF9500;font-size:12px;line-height:1.5;" +
+          "box-shadow:0 8px 24px rgba(0,0,0,0.6);pointer-events:none;"
+        document.body.appendChild(hint)
+        hint.querySelectorAll("code").forEach((c) => {
+          c.style.cssText = "background:#222;padding:1px 5px;border-radius:3px;color:#ffcc80;"
+        })
+      }
+      const r = (modalEl || overlay).getBoundingClientRect()
+      hint.style.top = `${Math.max(r.top + 10, 8)}px`
+      hint.style.left = `${r.left + r.width / 2}px`
+      hint.style.transform = "translateX(-50%)"
+      hint.style.display = "block"
+    }
+    const hideBpHint = () => {
+      const hint = document.getElementById("bp-save-hint")
+      if (hint) hint.style.display = "none"
+    }
+    saveBpBtn.addEventListener("mouseenter", showBpHint)
+    saveBpBtn.addEventListener("mouseleave", hideBpHint)
+    saveBpBtn.addEventListener("click", hideBpHint)
   }
 
   const importBtn = overlay.querySelector("#import-colors")
@@ -4350,6 +4406,8 @@ function closeColorModal() {
     overlay.remove()
     colorModalOpen = false
   }
+  const bpHint = document.getElementById("bp-save-hint")
+  if (bpHint) bpHint.remove()
 }
 
 // Show notification
